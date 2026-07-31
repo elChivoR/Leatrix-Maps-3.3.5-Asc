@@ -911,10 +911,25 @@
 		-- Map position (movable/unlockable world map frame)
 		----------------------------------------------------------------------
 
-		-- Remove frame management by UI panel system
-		WorldMapFrame:SetAttribute("UIPanelLayout-area", "center")
-		WorldMapFrame:SetAttribute("UIPanelLayout-enabled", false)
-		WorldMapFrame:SetAttribute("UIPanelLayout-allowOtherPanels", true)
+		-- Remove frame management by UI panel system entirely. With no "area"
+		-- attribute, ShowUIPanel/HideUIPanel fall back to plain Show/Hide, so
+		-- opening other panels (character frame etc.) never repositions the
+		-- map and opening the map never pushes other panels around.
+		local function DetachMapFromUIPanels()
+			WorldMapFrame:SetAttribute("UIPanelLayout-defined", true)
+			WorldMapFrame:SetAttribute("UIPanelLayout-area", nil)
+			WorldMapFrame:SetAttribute("UIPanelLayout-pushable", nil)
+			WorldMapFrame:SetAttribute("UIPanelLayout-allowOtherPanels", true)
+			WorldMapFrame:SetAttribute("UIPanelLayout-whileDead", true)
+			-- Keep the map above standard panels (character frame is MEDIUM)
+			WorldMapFrame:SetFrameStrata("HIGH")
+		end
+		UIPanelWindows["WorldMapFrame"] = nil
+		DetachMapFromUIPanels()
+
+		-- Blizzard re-registers the map as a "center" panel inside
+		-- WorldMap_ToggleSizeDown, so detach again after every call
+		hooksecurefunc("WorldMap_ToggleSizeDown", DetachMapFromUIPanels)
 
 		-- Enable movement (mirrors Mapster approach)
 		WorldMapFrame:SetMovable(true)
@@ -939,6 +954,18 @@
 		if not GetCVarBool("miniWorldMap") then
 			SetCVar("miniWorldMap", "1")
 		end
+
+		-- The CVar alone only takes effect through ToggleWorldMap; other open
+		-- paths (quest log, minimap button) can still show the map fullscreen.
+		-- Switch to windowed now and enforce it whenever the map is shown.
+		if WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size ~= WORLDMAP_WINDOWED_SIZE then
+			WorldMap_ToggleSizeDown()
+		end
+		WorldMapFrame:HookScript("OnShow", function()
+			if WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size ~= WORLDMAP_WINDOWED_SIZE then
+				WorldMap_ToggleSizeDown()
+			end
+		end)
 
 		-- Restore saved scale and position every time the map is shown
 		WorldMapFrame:HookScript("OnShow", function()
@@ -1199,17 +1226,21 @@
 							local iw, ih = atlasIcon[1], atlasIcon[2]
 							local l, r, t, b = atlasIcon[3], atlasIcon[4], atlasIcon[5], atlasIcon[6]
 							local tex = atlasIcon[7] or wdmAtlasTex
+							-- Zone crossing arrows carry their facing (radians) in field 12
+							local rot = (pType == "Arrow") and (pinInfo[12] or 0) or 0
 							pin:SetSize(iw, ih)
 							pin.tex:SetSize(iw, ih)
 							pin.tex:SetTexture(tex)
 							pin.tex:SetVertexColor(1, 1, 1, 1)
-							pin.tex:SetRotation(0)
+							pin.tex:SetRotation(rot)
 							pin.tex:SetTexCoord(l, r, t, b)
 							pin.glow:SetTexture(tex)
 							pin.glow:SetTexCoord(l, r, t, b)
+							pin.glow:SetRotation(rot)
 							pin.glow:SetAlpha(0)
 							pin.hi:SetTexture(tex)
 							pin.hi:SetTexCoord(l, r, t, b)
+							pin.hi:SetRotation(rot)
 							pin.hi:SetAlpha(0.4)
 						else
 							pin.tex:SetTexture(flatTex)
