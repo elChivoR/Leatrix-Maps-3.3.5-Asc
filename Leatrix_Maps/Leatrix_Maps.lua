@@ -149,8 +149,9 @@
 
 	-- Atlas texture (objecticonsatlas.blp bundled in Leatrix_Maps/textures)
 	-- UV data matches WDM addon's _data.lua atlasIcons table.
-	-- Format: {width, height, left, right, top, bottom}
+	-- Format: {width, height, left, right, top, bottom, texture, hitWidth, hitHeight}
 	local wdmAtlasTex = "Interface\\AddOns\\Leatrix_Maps\\textures\\objecticonsatlas"
+	local arrowTex    = "Interface\\AddOns\\Leatrix_Maps\\textures\\ZoneCrossingArrow"
 	local flatTex     = "Interface\\ChatFrame\\ChatFrameBackground"
 	local atlasIconData = {
 		["Dungeon"]                     = {32, 32, 0.198242,  0.247070,  0.313477, 0.362305},
@@ -162,7 +163,12 @@
 		["TaxiNode_Continent_Horde"]    = {28, 28, 0.907227,  0.969727,  0.127930, 0.190430},
 		["TaxiNode_Continent_Neutral"]  = {28, 28, 0.133789,  0.196289,  0.256836, 0.319336},
 		["Spirit"]                      = {32, 32, 827/1024,  859/1024,  655/1024, 687/1024, "Interface\\AddOns\\Leatrix_Maps\\textures\\objecticonsatlas2"},
-		["Arrow"]                       = {33, 39, 93/1024,   126/1024,  388/512,  427/512,  "Interface\\AddOns\\Leatrix_Maps\\textures\\garrisonbuildingui"},
+		-- Zone crossing arrows get their own texture rather than an atlas region.
+		-- SetRotation replaces whatever SetTexCoord set with the whole file, so a
+		-- rotated icon has to own its texture. Drawn at 64x64 (the arrow itself is
+		-- 33x39 of that, the rest is padding it turns through); the pin frame stays
+		-- 33x39 so the click target does not grow.
+		["Arrow"]                       = {64, 64, 0, 1, 0, 1, arrowTex, 33, 39},
 	}
 
 	-- Active pin texture objects (reused across refreshes)
@@ -1226,22 +1232,31 @@
 							local iw, ih = atlasIcon[1], atlasIcon[2]
 							local l, r, t, b = atlasIcon[3], atlasIcon[4], atlasIcon[5], atlasIcon[6]
 							local tex = atlasIcon[7] or wdmAtlasTex
+							local hitW, hitH = atlasIcon[8] or iw, atlasIcon[9] or ih
 							-- Zone crossing arrows carry their facing (radians) in field 12
 							local rot = (pType == "Arrow") and (pinInfo[12] or 0) or 0
-							pin:SetSize(iw, ih)
+							pin:SetSize(hitW, hitH)
 							pin.tex:SetSize(iw, ih)
 							pin.tex:SetTexture(tex)
 							pin.tex:SetVertexColor(1, 1, 1, 1)
-							pin.tex:SetRotation(rot)
 							pin.tex:SetTexCoord(l, r, t, b)
 							pin.glow:SetTexture(tex)
 							pin.glow:SetTexCoord(l, r, t, b)
-							pin.glow:SetRotation(rot)
 							pin.glow:SetAlpha(0)
 							pin.hi:SetTexture(tex)
 							pin.hi:SetTexCoord(l, r, t, b)
-							pin.hi:SetRotation(rot)
 							pin.hi:SetAlpha(0.4)
+							-- Rotate last: SetRotation and SetTexCoord both write the same
+							-- coordinates and the later call wins. Only whole-texture icons
+							-- may take this branch; on an atlas region SetRotation would
+							-- throw the region away and draw the entire sheet. The
+							-- SetTexCoord calls above also clear rotation left on a pooled
+							-- pin by a previous arrow.
+							if rot ~= 0 then
+								pin.tex:SetRotation(rot)
+								pin.glow:SetRotation(rot)
+								pin.hi:SetRotation(rot)
+							end
 						else
 							pin.tex:SetTexture(flatTex)
 							pin.tex:SetTexCoord(0, 1, 0, 1)
