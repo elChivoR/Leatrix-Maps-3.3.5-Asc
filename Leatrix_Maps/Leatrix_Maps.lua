@@ -1231,8 +1231,11 @@
 						-- Position (pinInfo[2] = x%, pinInfo[3] = y%)
 						local px = (pinInfo[2] / 100) * mapW
 						local py = -(pinInfo[3] / 100) * mapH
+						-- Anchor CENTER, not TOPLEFT. The pin is resized below from the
+						-- atlas data, so a fixed corner offset puts every icon size in a
+						-- different spot. Same idiom as WorldMap_UpdateLandmarks.
 						pin:ClearAllPoints()
-						pin:SetPoint("TOPLEFT", WorldMapDetailFrame, "TOPLEFT", px - 7, py + 7)
+						pin:SetPoint("CENTER", WorldMapDetailFrame, "TOPLEFT", px, py)
 
 						-- Apply atlas icon or fallback colored square
 						local atlasIcon = atlasIconData[pinInfo[6]]
