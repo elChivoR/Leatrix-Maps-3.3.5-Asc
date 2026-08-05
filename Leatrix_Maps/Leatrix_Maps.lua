@@ -929,6 +929,14 @@
 			WorldMapFrame:SetAttribute("UIPanelLayout-whileDead", true)
 			-- Keep the map above standard panels (character frame is MEDIUM)
 			WorldMapFrame:SetFrameStrata("HIGH")
+			-- SetFrameStrata cascades to children, so this drags WorldMapTooltip
+			-- down from TOOLTIP into HIGH, where the map artwork (WorldMapDetailFrame,
+			-- level 89) draws over it: unit tooltips were built and shown correctly
+			-- but rendered behind the map. Blizzard re-asserts TOOLTIP in
+			-- WorldMap_ToggleSizeUp, but our ToggleSizeDown hook below runs after it.
+			for _, tip in ipairs({WorldMapTooltip, WorldMapCompareTooltip1, WorldMapCompareTooltip2}) do
+				tip:SetFrameStrata("TOOLTIP")
+			end
 		end
 		UIPanelWindows["WorldMapFrame"] = nil
 		DetachMapFromUIPanels()
@@ -1499,7 +1507,6 @@
 				SetZoneMapStyle()
 				LeaMapsLC:ReloadCheck()
 			end)
-			LeaMapsCB["ListFrameZoneMapMenu"]:SetFrameLevel(30)
 		end
 
 		----------------------------------------------------------------------
@@ -1903,7 +1910,15 @@
 		ddlist:SetWidth(frame:GetWidth())
 		ddlist:SetHeight((#items * 16) + 16 + 16)
 		ddlist:SetFrameStrata("FULLSCREEN_DIALOG")
-		ddlist:SetFrameLevel(12)
+		-- Level must be relative to the parent and re-applied on show. The zone
+		-- dropdowns are lifted to WorldMapFrame's level + 11 after creation, and
+		-- Blizzard's WorldMapFrame_ResetFrameLevels shifts them again on every map
+		-- resize. A fixed level left the open list far below its own parent, so it
+		-- popped up underneath the map.
+		ddlist:SetFrameLevel(frame:GetFrameLevel() + 5)
+		ddlist:SetScript("OnShow", function(list)
+			list:SetFrameLevel(list:GetParent():GetFrameLevel() + 5)
+		end)
 		ddlist:SetBackdrop({
 			bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
 			edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
