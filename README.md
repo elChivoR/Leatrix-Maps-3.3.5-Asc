@@ -8,7 +8,9 @@ backported from Leatrix Maps for WOTLK Classic
 As a disclaimer this addon was heavily vibecoded, but so far the result is better than expected and I wanted to share it. Feel free to report any issues.
 
 ---
-<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/820f87a4-acbc-47be-b635-b696ed80e0ea" />
+<img width="1920" height="1080" alt="WoWScrnShot_080726_175743" src="https://github.com/user-attachments/assets/5865044c-3554-4bca-9b29-3fdab8c50f5d" />
+
+
 
 ## Features
 
@@ -67,3 +69,4 @@ As a disclaimer this addon was heavily vibecoded, but so far the result is bette
 
 - **Leatrix** — original addon author
 - Zoom adapted from [Magnify-WotLK](https://github.com/rissole/Magnify-WotLK)
+- Map reveal adapted from Mapster 3.3.5: https://www.curseforge.com/wow/addons/mapster/files/436697
