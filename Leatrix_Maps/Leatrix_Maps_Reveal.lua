@@ -1048,6 +1048,7 @@
 
 	-- True while overlay textures carry a tint.  Blizzard never touches vertex
 	-- colour itself, so tinted textures have to be cleared before it reuses them.
+	local tintApplied = false
 
 	-- The original GetNumMapOverlays, stored by LeaMapsFC.Setup.  Our own hook
 	-- reports zero while reveal is on, so the original is the only way to find
