@@ -295,7 +295,9 @@
 
 		if WorldMapFrameCloseButton then
 			WorldMapFrameCloseButton:ClearAllPoints()
-			WorldMapFrameCloseButton:SetPoint("TOPRIGHT", WorldMapScrollFrame, "TOPRIGHT", 6, 6)
+			-- UIPanelCloseButton is 32x32 in 3.3.5a; the Classic artwork is smaller
+			WorldMapFrameCloseButton:SetSize(18, 18)
+			WorldMapFrameCloseButton:SetPoint("TOPRIGHT", WorldMapScrollFrame, "TOPRIGHT", 0, 0)
 			WorldMapFrameCloseButton:SetFrameLevel(5000)
 			WorldMapFrameCloseButton.SetPoint = function() end
 		end
@@ -894,13 +896,14 @@
 			cFrame.t:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
 			cFrame.t:SetVertexColor(0, 0, 0, 0.5)
 
+			-- Inset matches TBC Classic, which keeps the coords well clear of the corners
 			cCursor:SetParent(cFrame)
 			cCursor:ClearAllPoints()
-			cCursor:SetPoint("BOTTOMLEFT", cFrame, "BOTTOMLEFT", 8, 0)
+			cCursor:SetPoint("BOTTOMLEFT", cFrame, "BOTTOMLEFT", 73, 0)
 
 			cPlayer:SetParent(cFrame)
 			cPlayer:ClearAllPoints()
-			cPlayer:SetPoint("BOTTOMRIGHT", cFrame, "BOTTOMRIGHT", -8, 0)
+			cPlayer:SetPoint("BOTTOMRIGHT", cFrame, "BOTTOMRIGHT", -46, 0)
 
 			local function SetupCoordsBar()
 				if LeaMapsLC["ShowCoords"] == "On" then
@@ -1190,6 +1193,20 @@
 				end
 			end
 
+			local function PositionPin(pin)
+				local zoom = WorldMapDetailFrame:GetScale()
+				if not zoom or zoom <= 0 then zoom = 1 end
+				pin:SetScale(1 / zoom)
+				pin:ClearAllPoints()
+				pin:SetPoint("CENTER", WorldMapDetailFrame, "TOPLEFT", pin.px * zoom, pin.py * zoom)
+			end
+
+			local function RescaleAllPins()
+				for i = 1, #activePins do
+					PositionPin(activePins[i])
+				end
+			end
+
 			local function RefreshPOI()
 				ReleaseAllPins()
 				if LeaMapsLC["ShowPointsOfInterest"] ~= "On" then return end
@@ -1234,8 +1251,8 @@
 						-- Anchor CENTER, not TOPLEFT. The pin is resized below from the
 						-- atlas data, so a fixed corner offset puts every icon size in a
 						-- different spot. Same idiom as WorldMap_UpdateLandmarks.
-						pin:ClearAllPoints()
-						pin:SetPoint("CENTER", WorldMapDetailFrame, "TOPLEFT", px, py)
+						pin.px, pin.py = px, py
+						PositionPin(pin)
 
 						-- Apply atlas icon or fallback colored square
 						local atlasIcon = atlasIconData[pinInfo[6]]
@@ -1337,6 +1354,15 @@
 			WorldMapFrame:HookScript("OnShow", RefreshPOI)
 			WorldMapFrame:HookScript("OnHide", ReleaseAllPins)
 
+			-- Re-apply the counter-scale on every zoom change.  Wrapping the zoom
+			-- module from here rather than editing it keeps Leatrix_Maps_Zoom.lua
+			-- line-for-line comparable with the Magnify original it was ported from.
+			local ZoomSetDetailFrameScale = LeaMapsZoom.SetDetailFrameScale
+			LeaMapsZoom.SetDetailFrameScale = function(num)
+				ZoomSetDetailFrameScale(num)
+				RescaleAllPins()
+			end
+
 			-- Configuration panel
 			local poiFrame = LeaMapsLC:CreatePanel("Show points of interest", "poiFrame")
 			LeaMapsLC:MakeTx(poiFrame, "Settings", 16, -72)
@@ -1382,6 +1408,93 @@
 					if poiFrame:IsShown() then poiFrame:Hide(); poiFrame:Show() end
 				else
 					poiFrame:Show()
+					LeaMapsLC["PageF"]:Hide()
+				end
+			end)
+		end
+
+		----------------------------------------------------------------------
+		-- Show unexplored areas
+		----------------------------------------------------------------------
+
+		do
+
+			local tintFrame = LeaMapsLC:CreatePanel("Show unexplored areas", "tintFrame")
+
+			LeaMapsLC:MakeTx(tintFrame, "Settings", 16, -72)
+			LeaMapsLC:MakeWD(tintFrame, "Choose how areas you have not discovered yet are shown.", 16, -92)
+			LeaMapsLC:MakeCB(tintFrame, "RevTint", "Tint unexplored areas", 16, -122, false, "If checked, areas you have not discovered yet will be tinted with the colour below.  Areas you have discovered are always shown normally.")
+			LeaMapsLC:MakeSL(tintFrame, "tintRed", "Red", "Drag to set the amount of red.", 0, 1, 0.1, 36, -182, "%.1f")
+			LeaMapsLC:MakeSL(tintFrame, "tintGreen", "Green", "Drag to set the amount of green.", 0, 1, 0.1, 36, -232, "%.1f")
+			LeaMapsLC:MakeSL(tintFrame, "tintBlue", "Blue", "Drag to set the amount of blue.", 0, 1, 0.1, 206, -182, "%.1f")
+			LeaMapsLC:MakeSL(tintFrame, "tintAlpha", "Opacity", "Drag to set the opacity.", 0.1, 1, 0.1, 206, -232, "%.1f")
+
+			-- Preview colour block
+			local prvTitle = LeaMapsLC:MakeWD(tintFrame, "Preview", 386, -160)
+			tintFrame.preview = tintFrame:CreateTexture(nil, "ARTWORK")
+			tintFrame.preview:SetSize(50, 50)
+			tintFrame.preview:SetPoint("TOPLEFT", prvTitle, "TOPLEFT", 0, -20)
+
+			local function SetTintCol()
+				-- 3.3.5a has no SetColorTexture, SetTexture takes the colour directly
+				tintFrame.preview:SetTexture(LeaMapsLC["tintRed"], LeaMapsLC["tintGreen"], LeaMapsLC["tintBlue"], LeaMapsLC["tintAlpha"])
+
+				-- Show slider values as percentages
+				LeaMapsCB["tintRed"].f:SetFormattedText("%.0f%%", LeaMapsLC["tintRed"] * 100)
+				LeaMapsCB["tintGreen"].f:SetFormattedText("%.0f%%", LeaMapsLC["tintGreen"] * 100)
+				LeaMapsCB["tintBlue"].f:SetFormattedText("%.0f%%", LeaMapsLC["tintBlue"] * 100)
+				LeaMapsCB["tintAlpha"].f:SetFormattedText("%.0f%%", LeaMapsLC["tintAlpha"] * 100)
+
+				-- Enable the colour controls only while tinting is enabled
+				local enabled = LeaMapsLC["RevTint"] == "On"
+				for k, field in pairs({"tintRed", "tintGreen", "tintBlue", "tintAlpha"}) do
+					if enabled then
+						LeaMapsCB[field]:Enable(); LeaMapsCB[field]:SetAlpha(1.0)
+					else
+						LeaMapsCB[field]:Disable(); LeaMapsCB[field]:SetAlpha(0.3)
+					end
+				end
+				if enabled then
+					prvTitle:SetAlpha(1.0); tintFrame.preview:SetAlpha(1.0)
+				else
+					prvTitle:SetAlpha(0.3); tintFrame.preview:SetAlpha(0.3)
+				end
+
+				-- Recolour the overlays already on screen
+				LeaMapsFC.ApplyTint()
+			end
+
+			LeaMapsCB["RevTint"]:HookScript("OnClick", SetTintCol)
+			LeaMapsCB["tintRed"]:HookScript("OnValueChanged", SetTintCol)
+			LeaMapsCB["tintGreen"]:HookScript("OnValueChanged", SetTintCol)
+			LeaMapsCB["tintBlue"]:HookScript("OnValueChanged", SetTintCol)
+			LeaMapsCB["tintAlpha"]:HookScript("OnValueChanged", SetTintCol)
+			SetTintCol()
+
+			tintFrame.b:HookScript("OnClick", function()
+				tintFrame:Hide()
+				LeaMapsLC["PageF"]:Show()
+			end)
+			tintFrame.r:HookScript("OnClick", function()
+				LeaMapsLC["RevTint"] = "On"
+				LeaMapsLC["tintRed"] = 0.6
+				LeaMapsLC["tintGreen"] = 0.6
+				LeaMapsLC["tintBlue"] = 1
+				LeaMapsLC["tintAlpha"] = 1
+				SetTintCol()
+				tintFrame:Hide(); tintFrame:Show()
+			end)
+			LeaMapsCB["RevealMapsBtn"]:HookScript("OnClick", function()
+				if IsShiftKeyDown() and IsControlKeyDown() then
+					LeaMapsLC["RevTint"] = "On"
+					LeaMapsLC["tintRed"] = 0.6
+					LeaMapsLC["tintGreen"] = 0.6
+					LeaMapsLC["tintBlue"] = 1
+					LeaMapsLC["tintAlpha"] = 1
+					SetTintCol()
+					if tintFrame:IsShown() then tintFrame:Hide(); tintFrame:Show() end
+				else
+					tintFrame:Show()
 					LeaMapsLC["PageF"]:Hide()
 				end
 			end)
@@ -1529,7 +1642,8 @@
 
 			-- Handle frame (visible grip icon)
 			local scaleHandle = CreateFrame("Frame", nil, WorldMapFrame)
-			scaleHandle:SetSize(20, 20)
+			scaleHandle:SetSize(16, 16)
+			scaleHandle:SetAlpha(0.5)
 			scaleHandle:SetPoint("BOTTOMRIGHT", WorldMapScrollFrame, "BOTTOMRIGHT", 0, 0)
 			scaleHandle:SetFrameLevel(WorldMapFrame:GetFrameLevel() + 15)
 
@@ -1825,6 +1939,7 @@
 		LeaMapsLC:LockOption("ShowZoneLevels", "ShowZoneLevelsBtn", false)
 		LeaMapsLC:LockOption("UnlockMapFrame", "UnlockMapFrameBtn", false)
 		LeaMapsLC:LockOption("SetMapOpacity", "SetMapOpacityBtn", true)
+		LeaMapsLC:LockOption("RevealMaps", "RevealMapsBtn", false)
 	end
 
 	-- Create a standard button
@@ -2316,6 +2431,11 @@
 			LeaMapsLC:LoadVarNum("ZoneMapMenu", 1, 1, 3)
 			LeaMapsLC:LoadVarChk("ShowMinimapIcon", "On")
 			LeaMapsLC:LoadVarChk("RevealMaps", "Off")
+			LeaMapsLC:LoadVarChk("RevTint", "On")
+			LeaMapsLC:LoadVarNum("tintRed", 0.6, 0, 1)
+			LeaMapsLC:LoadVarNum("tintGreen", 0.6, 0, 1)
+			LeaMapsLC:LoadVarNum("tintBlue", 1, 0, 1)
+			LeaMapsLC:LoadVarNum("tintAlpha", 1, 0.1, 1)
 
 			-- Panel position
 			LeaMapsLC:LoadVarAnc("MainPanelA", "CENTER")
@@ -2364,6 +2484,11 @@
 			LeaMapsDB["ZoneMapMenu"] = LeaMapsLC["ZoneMapMenu"]
 			LeaMapsDB["ShowMinimapIcon"] = LeaMapsLC["ShowMinimapIcon"]
 			LeaMapsDB["RevealMaps"] = LeaMapsLC["RevealMaps"]
+			LeaMapsDB["RevTint"] = LeaMapsLC["RevTint"]
+			LeaMapsDB["tintRed"] = LeaMapsLC["tintRed"]
+			LeaMapsDB["tintGreen"] = LeaMapsLC["tintGreen"]
+			LeaMapsDB["tintBlue"] = LeaMapsLC["tintBlue"]
+			LeaMapsDB["tintAlpha"] = LeaMapsLC["tintAlpha"]
 
 			-- Panel
 			LeaMapsDB["MainPanelA"] = LeaMapsLC["MainPanelA"]
@@ -2485,6 +2610,7 @@
 	LeaMapsLC:CfgBtn("ShowZoneLevelsBtn", LeaMapsCB["ShowZoneLevels"])
 	LeaMapsLC:CfgBtn("UnlockMapFrameBtn", LeaMapsCB["UnlockMapFrame"])
 	LeaMapsLC:CfgBtn("SetMapOpacityBtn", LeaMapsCB["SetMapOpacity"])
+	LeaMapsLC:CfgBtn("RevealMapsBtn", LeaMapsCB["RevealMaps"])
 
 	-- Reset map position button
 	local resetMapPosBtn = LeaMapsLC:CreateButton("resetMapPosBtn", PageF, "Reset Map Layout", "BOTTOMLEFT", 16, 10, 25, "Click to reset the position of the map frame.")

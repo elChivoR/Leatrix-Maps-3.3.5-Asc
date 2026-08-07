@@ -15,6 +15,8 @@
 	local mod, floor, ceil = math.fmod, math.floor, math.ceil
 	local format = string.format
 	local strlower = string.lower
+	local strmatch, strfind = string.match, string.find
+	local tinsert = table.insert
 
 	-- Errata table: zone map filename → { SUBZONENAME = encodedTexID, ... }
 	-- Adapted from Mapster FogClear. The encoded texID packs width/height/offsetX/offsetY.
@@ -1039,29 +1041,148 @@
 		end
 	})
 
+	-- Overlay textures currently drawn for areas the player has not discovered.
+	-- Rebuilt on every render so the tint controls can recolour what is already
+	-- on screen without forcing a map redraw.
+	local unexploredTextures = {}
+
+	-- True while overlay textures carry a tint.  Blizzard never touches vertex
+	-- colour itself, so tinted textures have to be cleared before it reuses them.
+
+	-- The original GetNumMapOverlays, stored by LeaMapsFC.Setup.  Our own hook
+	-- reports zero while reveal is on, so the original is the only way to find
+	-- out which sub-zones the player has actually discovered.
+	local origGetNumMapOverlays
+
+	-- Colour for undiscovered areas (white when tinting is off)
+	local function getTintColor()
+		if LeaMapsLC and LeaMapsLC["RevTint"] == "On" then
+			return LeaMapsLC["tintRed"] or 0.6, LeaMapsLC["tintGreen"] or 0.6,
+				LeaMapsLC["tintBlue"] or 1, LeaMapsLC["tintAlpha"] or 1
+		end
+		return 1, 1, 1, 1
+	end
+
+	-- Recolour the undiscovered overlays that are already on screen so dragging
+	-- a tint slider updates the map immediately.
+	function LeaMapsFC.ApplyTint()
+		local r, g, b, a = getTintColor()
+		for i = 1, #unexploredTextures do
+			unexploredTextures[i]:SetVertexColor(r, g, b)
+			unexploredTextures[i]:SetAlpha(a)
+		end
+		tintApplied = LeaMapsLC and LeaMapsLC["RevTint"] == "On" and #unexploredTextures > 0 or false
+	end
+
+	-- Restore every overlay texture to plain white.  Used when reveal is
+	-- switched off, otherwise Blizzard would redraw discovered areas tinted.
+	function LeaMapsFC.ResetOverlayColors()
+		for i = 1, NUM_WORLDMAP_OVERLAYS do
+			local ov = _G["WorldMapOverlay"..i]
+			if ov then
+				ov:SetVertexColor(1, 1, 1)
+				ov:SetAlpha(1)
+			end
+		end
+		wipe(unexploredTextures)
+		tintApplied = false
+	end
+
+	-- Sub-zones the player has discovered, keyed by lower case texture name with
+	-- the path stripped so it matches the errata keys whichever form the client
+	-- reports.  Values keep the overlay geometry for zones missing from errata.
+	local function getDiscoveredOverlays(pathPrefix)
+		local discovered = {}
+		if not origGetNumMapOverlays then return discovered end
+		for i = 1, origGetNumMapOverlays() do
+			local textureName, texWidth, texHeight, offsetX, offsetY = GetMapOverlayInfo(i)
+			if textureName and textureName ~= "" and textureName ~= " " then
+				local baseName = strmatch(textureName, "([^\\]+)$") or textureName
+				local key = strlower(baseName)
+				-- Blizzard pads some zones with a dummy "pixelfix" overlay
+				if not strfind(key, "pixelfix", 1, true) then
+					discovered[key] = {
+						width = texWidth,
+						height = texHeight,
+						offsetX = offsetX,
+						offsetY = offsetY,
+						path = strfind(textureName, "\\", 1, true) and textureName or (pathPrefix .. textureName),
+					}
+				end
+			end
+		end
+		return discovered
+	end
+
 	-- Renders all sub-zone overlays for the current zone using the named
 	-- WorldMapOverlay%d frames — the same frames Blizzard uses.  If the errata
 	-- data needs more frames than currently exist, new ones are created and
 	-- NUM_WORLDMAP_OVERLAYS is updated so Blizzard's own hide-loop covers them.
-	-- (This mirrors Mapster FogClear's updateOverlayTextures exactly.)
+	-- (This mirrors Mapster FogClear's updateOverlayTextures, with the addition
+	-- of MozzFullWorldMap's discovered/undiscovered split so the two can be
+	-- coloured differently.)
 	local function updateOverlayTextures()
 		if not WorldMapFrame:IsShown() then return end
 
 		local mapFileName = GetMapInfo()
 		if not mapFileName then return end
 
-		local overlayMap = errata[mapFileName]
-		if not next(overlayMap) then return end   -- no errata for this zone/continent
+		wipe(unexploredTextures)
 
 		local pathPrefix = "Interface\\WorldMap\\" .. mapFileName .. "\\"
+		local discovered = getDiscoveredOverlays(pathPrefix)
+		local overlayMap = errata[mapFileName]
+
+		-- Build the render list from the errata data, flagging each sub-zone as
+		-- explored or not.  Entries are removed from the discovered table as
+		-- they are matched by name, and the rest are matched by tile geometry
+		-- below (the same identity the Burning Crusade Classic version uses),
+		-- so a sub-zone the client happens to name differently is still
+		-- recognised as explored instead of being drawn twice.
+		local renderList = {}
+		local byGeometry = {}
+		for texName, texID in pairs(overlayMap) do
+			local key = strlower(texName)
+			local entry = {
+				path = pathPrefix .. texName,
+				width = mod(texID, 2^10),
+				height = mod(floor(texID / 2^10), 2^10),
+				offsetX = mod(floor(texID / 2^20), 2^10),
+				offsetY = floor(texID / 2^30),
+				explored = discovered[key] and true or false,
+			}
+			tinsert(renderList, entry)
+			byGeometry[entry.width..":"..entry.height..":"..entry.offsetX..":"..entry.offsetY] = entry
+			discovered[key] = nil
+		end
+		for _, info in pairs(discovered) do
+			local match = byGeometry[info.width..":"..info.height..":"..info.offsetX..":"..info.offsetY]
+			if match then
+				match.explored = true
+			else
+				tinsert(renderList, {
+					path = info.path,
+					width = info.width,
+					height = info.height,
+					offsetX = info.offsetX,
+					offsetY = info.offsetY,
+					explored = true,
+				})
+			end
+		end
+
+		if #renderList == 0 then return end   -- no overlays for this zone/continent
+
+		local tintR, tintG, tintB, tintA = getTintColor()
 		local textureCount = 0
 
-		for texName, texID in pairs(overlayMap) do
-			local textureName   = pathPrefix .. texName
-			local textureWidth  = mod(texID, 2^10)
-			local textureHeight = mod(floor(texID / 2^10), 2^10)
-			local offsetX       = mod(floor(texID / 2^20), 2^10)
-			local offsetY       = floor(texID / 2^30)
+		for i = 1, #renderList do
+			local entry = renderList[i]
+			local textureName   = entry.path
+			local textureWidth  = entry.width
+			local textureHeight = entry.height
+			local offsetX       = entry.offsetX
+			local offsetY       = entry.offsetY
 
 			local numTexturesWide = ceil(textureWidth  / 256)
 			local numTexturesTall = ceil(textureHeight / 256)
@@ -1110,8 +1231,14 @@
 						offsetX + (256 * (k - 1)),
 						-(offsetY + (256 * (j - 1))))
 					texture:SetTexture(format(textureName.."%d", ((j - 1) * numTexturesWide) + k))
-					texture:SetVertexColor(1, 1, 1)
-					texture:SetAlpha(1)
+					if entry.explored then
+						texture:SetVertexColor(1, 1, 1)
+						texture:SetAlpha(1)
+					else
+						texture:SetVertexColor(tintR, tintG, tintB)
+						texture:SetAlpha(tintA)
+						tinsert(unexploredTextures, texture)
+					end
 					texture:SetDrawLayer("ARTWORK")
 					texture:Show()
 				end
@@ -1123,33 +1250,27 @@
 			local ov = _G["WorldMapOverlay"..i]
 			if ov then ov:Hide() end
 		end
+
+		tintApplied = LeaMapsLC and LeaMapsLC["RevTint"] == "On" and #unexploredTextures > 0 or false
 	end
 
 	function LeaMapsFC.Setup()
 		if LeaMapsFC._setup then return end
 		LeaMapsFC._setup = true
-
-		-- Override GetNumMapOverlays exactly as Mapster FogClear does:
-		-- return 0 when RevealMaps is On so Blizzard's WorldMapFrame_Update
-		-- hides every WorldMapOverlayN frame, leaving them free for us to
-		-- reuse.  Continent maps (NUM_WORLDMAP_OVERLAYS == 0) always pass
-		-- through so their own zero-overlay path is unchanged.
 		local _origGNMO = GetNumMapOverlays
+		origGetNumMapOverlays = _origGNMO
 		GetNumMapOverlays = function()
 			if NUM_WORLDMAP_OVERLAYS == 0 then return _origGNMO() end
 			if LeaMapsLC and LeaMapsLC["RevealMaps"] == "On" then return 0 end
 			return _origGNMO()
 		end
-
-		-- Replace WorldMapFrame_Update (Mapster's "RawHook").
-		-- The original runs first; with GetNumMapOverlays returning 0 it hides
-		-- all WorldMapOverlayN frames.  Then we render every sub-zone overlay
-		-- (discovered and undiscovered alike) through those same frames.
 		local _orig = WorldMapFrame_Update
 		WorldMapFrame_Update = function()
 			_orig()
 			if LeaMapsLC and LeaMapsLC["RevealMaps"] == "On" then
 				updateOverlayTextures()
+			elseif tintApplied then
+				LeaMapsFC.ResetOverlayColors()
 			end
 		end
 	end
