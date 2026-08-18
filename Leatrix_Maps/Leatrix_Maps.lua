@@ -12,6 +12,83 @@
 	local LeaMapsLC, LeaMapsCB, LeaDropList, LeaConfigList, LeaLockList = {}, {}, {}, {}, {}
 	_G.LeaMapsLC = LeaMapsLC  -- expose for Reveal.lua and other modules
 
+	--[[ Performance profiling (uncomment to enable /ltm perf)
+	LeaMapsLC.PerfLog = false
+	LeaMapsLC.PerfData = {}
+	LeaMapsLC.PerfLines = {}
+	LeaMapsLC._perfOpenCount = 0
+
+	function LeaMapsLC:PerfMsg(msg, r, g, b)
+		DEFAULT_CHAT_FRAME:AddMessage(msg, r or 0.5, g or 1, b or 0.5)
+		local plain = msg:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+		tinsert(self.PerfLines, plain)
+	end
+
+	function LeaMapsLC:PerfStart(label)
+		if not self.PerfLog then return end
+		self.PerfData[label] = debugprofilestop()
+	end
+	function LeaMapsLC:PerfEnd(label)
+		if not self.PerfLog then return end
+		local startTime = self.PerfData[label]
+		if not startTime then return end
+		local elapsed = debugprofilestop() - startTime
+		self.PerfData[label] = nil
+		self:PerfMsg("|cff00ccff[LM Perf]|r " .. label .. ": " .. format("%.1f", elapsed) .. " ms")
+		return elapsed
+	end
+
+	function LeaMapsLC:ShowPerfCopyFrame()
+		if not self.perfCopyFrame then
+			local f = CreateFrame("Frame", nil, UIParent)
+			f:SetFrameStrata("DIALOG")
+			f:SetWidth(520)
+			f:SetHeight(320)
+			f:SetPoint("CENTER")
+			f:SetBackdrop({
+				bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+				edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+				tile = true, tileSize = 32, edgeSize = 32,
+				insets = {left = 8, right = 8, top = 8, bottom = 8},
+			})
+			f:SetMovable(true)
+			f:EnableMouse(true)
+			f:RegisterForDrag("LeftButton")
+			f:SetScript("OnDragStart", f.StartMoving)
+			f:SetScript("OnDragStop", f.StopMovingOrSizing)
+
+			local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+			title:SetPoint("TOP", 0, -12)
+			title:SetText("Performance Log  (Ctrl+A, Ctrl+C to copy)")
+
+			local sf = CreateFrame("ScrollFrame", "LeaMapsPerfScroll", f, "UIPanelScrollFrameTemplate")
+			sf:SetPoint("TOPLEFT", 12, -32)
+			sf:SetPoint("BOTTOMRIGHT", -30, 12)
+
+			local eb = CreateFrame("EditBox", nil, sf)
+			eb:SetMultiLine(true)
+			eb:SetAutoFocus(false)
+			eb:SetFontObject(GameFontHighlightSmall)
+			eb:SetWidth(460)
+			eb:SetScript("OnEscapePressed", function() f:Hide() end)
+			sf:SetScrollChild(eb)
+
+			local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+			close:SetPoint("TOPRIGHT", -2, -2)
+
+			f.editBox = eb
+			self.perfCopyFrame = f
+		end
+
+		local text = table.concat(self.PerfLines, "\n")
+		if text == "" then text = "(no perf data collected)" end
+		self.perfCopyFrame.editBox:SetText(text)
+		self.perfCopyFrame:Show()
+		self.perfCopyFrame.editBox:HighlightText()
+		self.perfCopyFrame.editBox:SetFocus()
+	end
+	--]]
+
 	-- Version
 	LeaMapsLC["AddonVer"] = "3.0.188-335"
 
@@ -181,11 +258,13 @@
 
 	-- Main function
 	function LeaMapsLC:MainFunc()
+		-- LeaMapsLC:PerfStart("MainFunc total")
 
 		----------------------------------------------------------------------
 		-- Build mapID -> {continent, zoneIndex} lookup dynamically
 		----------------------------------------------------------------------
 
+		-- LeaMapsLC:PerfStart("Build mapIDToCZ")
 		for cont = 1, 4 do
 			local zones = {GetMapZones(cont)}
 			for zi, zoneName in ipairs(zones) do
@@ -195,6 +274,7 @@
 				end
 			end
 		end
+		-- LeaMapsLC:PerfEnd("Build mapIDToCZ")
 
 		----------------------------------------------------------------------
 		-- Basic world map setup
@@ -231,10 +311,14 @@
 		WorldMapFrame:SetAlpha(1)
 
 		-- Initialise map zoom feature (Leatrix_Maps_Zoom.lua)
+		-- LeaMapsLC:PerfStart("Zoom init")
 		LeaMapsZoom.OnFirstLoad()
+		-- LeaMapsLC:PerfEnd("Zoom init")
 
 		-- Initialise fog-of-war reveal feature (Leatrix_Maps_Reveal.lua)
+		-- LeaMapsLC:PerfStart("Reveal init")
 		LeaMapsFC.Setup()
+		-- LeaMapsLC:PerfEnd("Reveal init")
 
 		-- Unlock map frame
 		if WorldMapTitleDropDown_ToggleLock then
@@ -322,6 +406,20 @@
 
 		LeaMapsCB["ShowObjectives"]:HookScript("OnClick", DoShowObjectivesFunc)
 		DoShowObjectivesFunc()
+
+		--[[ Wrap Blizzard's OnShow for performance breakdown
+		do
+			local _origOnShow = WorldMapFrame:GetScript("OnShow")
+			WorldMapFrame:SetScript("OnShow", function(self, ...)
+				if LeaMapsLC.PerfLog and LeaMapsLC._showStartTime then
+					LeaMapsLC:PerfMsg("|cff00ccff[LM Perf]|r C-side Show: " .. format("%.1f", debugprofilestop() - LeaMapsLC._showStartTime) .. " ms")
+				end
+				LeaMapsLC:PerfStart("Blizzard OnShow handler")
+				if _origOnShow then _origOnShow(self, ...) end
+				LeaMapsLC:PerfEnd("Blizzard OnShow handler")
+			end)
+		end
+		--]]
 
 		----------------------------------------------------------------------
 		-- Show zone dropdown menu
@@ -518,7 +616,11 @@
 			local mapUpdateFrame = CreateFrame("FRAME")
 			mapUpdateFrame:RegisterEvent("WORLD_MAP_UPDATE")
 			mapUpdateFrame:SetScript("OnEvent", SetMapControls)
-			WorldMapFrame:HookScript("OnShow", SetMapControls)
+			WorldMapFrame:HookScript("OnShow", function()
+				-- LeaMapsLC:PerfStart("OnShow: SetMapControls")
+				SetMapControls()
+				-- LeaMapsLC:PerfEnd("OnShow: SetMapControls")
+			end)
 
 			-- ElvUI: apply skin to our custom zone dropdowns
 			if LeaMapsLC.ElvUI then
@@ -979,19 +1081,24 @@
 			WorldMap_ToggleSizeDown()
 		end
 		WorldMapFrame:HookScript("OnShow", function()
+			-- LeaMapsLC:PerfStart("OnShow: ToggleSizeDown")
 			if WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size ~= WORLDMAP_WINDOWED_SIZE then
 				WorldMap_ToggleSizeDown()
 			end
+			-- LeaMapsLC:PerfEnd("OnShow: ToggleSizeDown")
 		end)
 
 		-- Restore saved scale and position every time the map is shown
 		WorldMapFrame:HookScript("OnShow", function()
+			-- LeaMapsLC:PerfStart("OnShow: RestorePosition")
 			if LeaMapsDB["MapScale"] then
 				WorldMapFrame:SetScale(LeaMapsDB["MapScale"])
 			end
 			WorldMapFrame:ClearAllPoints()
 			WorldMapFrame:SetPoint(LeaMapsLC["MapPosA"], UIParent, LeaMapsLC["MapPosR"], LeaMapsLC["MapPosX"], LeaMapsLC["MapPosY"])
 			if WorldMapTitleButton_OnDragStop then WorldMapTitleButton_OnDragStop() end
+			WorldMapFrame_UpdateQuests()
+			-- LeaMapsLC:PerfEnd("OnShow: RestorePosition")
 		end)
 
 		-- ElvUI: restore mouse (ElvUI noops EnableMouse) and hide its backdrop
@@ -1208,6 +1315,7 @@
 			end
 
 			local function RefreshPOI()
+				-- LeaMapsLC:PerfStart("RefreshPOI")
 				ReleaseAllPins()
 				if LeaMapsLC["ShowPointsOfInterest"] ~= "On" then return end
 
@@ -1345,6 +1453,7 @@
 						tinsert(activePins, pin)
 					end
 				end
+				-- LeaMapsLC:PerfEnd("RefreshPOI")
 			end
 
 			-- Refresh POI when map changes or options change
@@ -1686,6 +1795,7 @@
 				frame:SetAllPoints(scaleHandle)
 				LeaMapsDB["MapScale"] = WorldMapFrame:GetScale()
 				LeaMapsLC["MapPosA"], void, LeaMapsLC["MapPosR"], LeaMapsLC["MapPosX"], LeaMapsLC["MapPosY"] = WorldMapFrame:GetPoint()
+				WorldMapFrame_UpdateQuests()
 			end)
 
 			-- Show/hide handle: only in windowed (mini) mode when unlocked
@@ -1707,6 +1817,59 @@
 			end
 		end
 
+		--[[ Final OnShow timing (runs after ALL other hooks)
+		WorldMapFrame:HookScript("OnShow", function()
+			if LeaMapsLC.PerfLog and LeaMapsLC._showStartTime then
+				LeaMapsLC:PerfMsg("|cffff8800[LM Perf]|r All hooks done: " .. format("%.1f", debugprofilestop() - LeaMapsLC._showStartTime) .. " ms", 1, 0.8, 0)
+			end
+		end)
+		--]]
+
+		--[[ Performance: measure total map open time
+		do
+			local origShow = WorldMapFrame.Show
+			WorldMapFrame.Show = function(self, ...)
+				if LeaMapsLC.PerfLog then
+					LeaMapsLC._perfOpenCount = LeaMapsLC._perfOpenCount + 1
+					tinsert(LeaMapsLC.PerfLines, "--- Map Open #" .. LeaMapsLC._perfOpenCount .. " ---")
+					LeaMapsLC._showStartTime = debugprofilestop()
+				end
+				origShow(self, ...)
+				if LeaMapsLC.PerfLog and LeaMapsLC._showStartTime then
+					local elapsed = debugprofilestop() - LeaMapsLC._showStartTime
+					LeaMapsLC:PerfMsg("|cffff8800[LM Perf]|r MAP OPEN TOTAL: " .. format("%.1f", elapsed) .. " ms", 1, 0.8, 0)
+					LeaMapsLC._showStartTime = nil
+				end
+			end
+		end
+		--]]
+
+		----------------------------------------------------------------------
+		-- Pre-show warmup
+		----------------------------------------------------------------------
+		-- The addon heavily modifies WorldMapFrame before it is ever shown
+		-- (DisableDrawLayer, SetFrameStrata, ToggleSizeDown, child frames,
+		-- etc.).  On Ascension's 3.3.5 client the C-side Show() has to
+		-- rebuild its internal render state for all those changes, which
+		-- takes ~3-4 seconds on the very first open.  Subsequent opens are
+		-- instant because the engine caches the result.
+		--
+		-- Fix: one frame after MainFunc finishes (all modifications done),
+		-- silently Show/Hide the map at alpha 0 so the player never sees
+		-- it.  The C-side pays the initialization cost here instead of on
+		-- the first real map open, making it feel instant.
+
+		do
+			local warmup = CreateFrame("Frame")
+			warmup:SetScript("OnUpdate", function(self)
+				self:SetScript("OnUpdate", nil)
+				WorldMapFrame:SetAlpha(0)
+				WorldMapFrame:Show()
+				WorldMapFrame:Hide()
+				WorldMapFrame:SetAlpha(1)
+			end)
+		end
+
 		----------------------------------------------------------------------
 		-- Final code
 		----------------------------------------------------------------------
@@ -1718,6 +1881,7 @@
 		end
 
 		-- Release memory
+		-- LeaMapsLC:PerfEnd("MainFunc total")
 		LeaMapsLC.MainFunc = nil
 
 	end
@@ -2356,11 +2520,23 @@
 					LeaMapsLC:Print("Zone not found.")
 				end
 				return
+			--[[ elseif str == "perf" then
+				LeaMapsLC.PerfLog = not LeaMapsLC.PerfLog
+				if LeaMapsLC.PerfLog then
+					wipe(LeaMapsLC.PerfLines)
+					LeaMapsLC._perfOpenCount = 0
+					LeaMapsLC:Print("Performance logging |cff00ff00ENABLED|r. Open the map, then /ltm perf again to copy results.")
+				else
+					LeaMapsLC:Print("Performance logging |cffff0000DISABLED|r.")
+					LeaMapsLC:ShowPerfCopyFrame()
+				end
+				return --]]
 			elseif str == "help" then
 				LeaMapsLC:Print("Leatrix Maps " .. LeaMapsLC["AddonVer"])
 				LeaMapsLC:Print("/ltm reset - Reset panel position.")
 				LeaMapsLC:Print("/ltm wipe - Wipe all settings and reload.")
 				LeaMapsLC:Print("/ltm map - Show current map info.")
+				-- LeaMapsLC:Print("/ltm perf - Toggle performance logging.")
 				LeaMapsLC:Print("/ltm help - Show this information.")
 				return
 			else
