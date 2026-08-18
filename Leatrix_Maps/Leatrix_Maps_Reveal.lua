@@ -1128,6 +1128,7 @@
 		local mapFileName = GetMapInfo()
 		if not mapFileName then return end
 
+		-- LeaMapsLC:PerfStart("updateOverlayTextures (" .. mapFileName .. ")")
 		wipe(unexploredTextures)
 
 		local pathPrefix = "Interface\\WorldMap\\" .. mapFileName .. "\\"
@@ -1253,6 +1254,7 @@
 		end
 
 		tintApplied = LeaMapsLC and LeaMapsLC["RevTint"] == "On" and #unexploredTextures > 0 or false
+		-- LeaMapsLC:PerfEnd("updateOverlayTextures (" .. mapFileName .. ")")
 	end
 
 	function LeaMapsFC.Setup()
@@ -1267,11 +1269,13 @@
 		end
 		local _orig = WorldMapFrame_Update
 		WorldMapFrame_Update = function()
+			-- LeaMapsLC:PerfStart("WorldMapFrame_Update")
 			_orig()
 			if LeaMapsLC and LeaMapsLC["RevealMaps"] == "On" then
 				updateOverlayTextures()
 			elseif tintApplied then
 				LeaMapsFC.ResetOverlayColors()
 			end
+			-- LeaMapsLC:PerfEnd("WorldMapFrame_Update")
 		end
 	end
