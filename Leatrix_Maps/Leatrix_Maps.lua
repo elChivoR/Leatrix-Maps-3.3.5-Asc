@@ -101,6 +101,7 @@
 	if IsAddOnLoaded("ElvUI") then LeaMapsLC.ElvUI = unpack(ElvUI) end
 	if IsAddOnLoaded("Carbonite") then LeaMapsLC.Carbonite = true end
 	if IsAddOnLoaded("Demodal") then LeaMapsLC.Demodal = true end
+	if IsAddOnLoaded("pfQuest") or IsAddOnLoaded("pfQuest-turtle") then LeaMapsLC.pfQuest = true end
 
 	-- Set bindings translations
 	_G.BINDING_NAME_LEATRIX_MAPS_GLOBAL_TOGGLE = L["Toggle panel"]
@@ -397,7 +398,9 @@
 		----------------------------------------------------------------------
 
 		local function DoShowObjectivesFunc()
-			if LeaMapsLC["ShowObjectives"] == "On" then
+			if LeaMapsLC.pfQuest then
+				SetCVar("questPOI", "0")
+			elseif LeaMapsLC["ShowObjectives"] == "On" then
 				SetCVar("questPOI", "1")
 			else
 				SetCVar("questPOI", "0")
