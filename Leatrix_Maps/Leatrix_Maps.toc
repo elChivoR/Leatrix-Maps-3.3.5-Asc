@@ -3,8 +3,8 @@
 ## Title: Leatrix Maps
 ## Notes: Enhancements for your maps.
 
-## Version: 3.0.188
-## Author: Leatrix, 5Buttons, Ravelo
+## Version: 1.0.0
+## Author: Leatrix, 5Buttons, Ravelo, elChivoR
 ## SavedVariables: LeaMapsDB MagnifyOptions
 
 ## OptionalDeps: Leatrix_enUS, ElvUI, Demodal, Carbonite

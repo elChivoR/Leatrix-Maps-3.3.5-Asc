@@ -1,6 +1,6 @@
 
 	----------------------------------------------------------------------
-	-- 	Leatrix Maps 3.0.188 - WoW 3.3.5a Backport by Fivebuttons
+	-- 	Leatrix Maps 1.0.0 - WoW 3.3.5a Ascension
 	----------------------------------------------------------------------
 
 	-- 10:Func, 20:Comm, 30:Evnt, 40:Panl
@@ -90,7 +90,7 @@
 	--]]
 
 	-- Version
-	LeaMapsLC["AddonVer"] = "3.0.188-335"
+	LeaMapsLC["AddonVer"] = "1.0.0"
 
 	-- Get locale table
 	local void, Leatrix_Maps = ...
