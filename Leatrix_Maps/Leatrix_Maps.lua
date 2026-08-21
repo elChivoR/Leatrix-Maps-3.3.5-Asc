@@ -1101,6 +1101,9 @@
 			WorldMapFrame:SetPoint(LeaMapsLC["MapPosA"], UIParent, LeaMapsLC["MapPosR"], LeaMapsLC["MapPosX"], LeaMapsLC["MapPosY"])
 			if WorldMapTitleButton_OnDragStop then WorldMapTitleButton_OnDragStop() end
 			WorldMapFrame_UpdateQuests()
+			if WORLDMAP_SETTINGS.selectedQuestId then
+				WorldMapFrame_SelectQuestById(WORLDMAP_SETTINGS.selectedQuestId)
+			end
 			-- LeaMapsLC:PerfEnd("OnShow: RestorePosition")
 		end)
 
