@@ -1071,6 +1071,70 @@
 			if WorldMapTitleButton_OnDragStop then WorldMapTitleButton_OnDragStop() end
 		end)
 
+		-- Wide invisible drag borders so the map is easy to grab
+		do
+			local BORDER_W = 12
+			local borders = {}
+			local anchors = {
+				{"TOPLEFT", "TOPLEFT", "BOTTOMLEFT", 0},      -- left
+				{"TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", 0},    -- right
+				{"TOPLEFT", "TOPLEFT", "TOPRIGHT", 0},         -- top
+				{"BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", 0}, -- bottom
+			}
+			for i, a in ipairs(anchors) do
+				local b = CreateFrame("Frame", nil, WorldMapFrame)
+				b:SetFrameStrata("FULLSCREEN_DIALOG")
+				if i <= 2 then
+					b:SetWidth(BORDER_W)
+					b:SetPoint("TOPLEFT", WorldMapFrame, a[1], i == 1 and -BORDER_W or nil, 0)
+					b:SetPoint("BOTTOMLEFT", WorldMapFrame, a[3], i == 1 and -BORDER_W or nil, 0)
+					if i == 2 then
+						b:ClearAllPoints()
+						b:SetPoint("TOPRIGHT", WorldMapFrame, "TOPRIGHT", BORDER_W, 0)
+						b:SetPoint("BOTTOMRIGHT", WorldMapFrame, "BOTTOMRIGHT", BORDER_W, 0)
+					end
+				else
+					b:SetHeight(BORDER_W)
+					b:SetPoint("TOPLEFT", WorldMapFrame, a[1], 0, i == 3 and BORDER_W or nil)
+					b:SetPoint("TOPRIGHT", WorldMapFrame, a[3], 0, i == 3 and BORDER_W or nil)
+					if i == 4 then
+						b:ClearAllPoints()
+						b:SetPoint("BOTTOMLEFT", WorldMapFrame, "BOTTOMLEFT", 0, -BORDER_W)
+						b:SetPoint("BOTTOMRIGHT", WorldMapFrame, "BOTTOMRIGHT", 0, -BORDER_W)
+					end
+				end
+				b:EnableMouse(true)
+				b:SetMovable(true)
+				b:RegisterForDrag("LeftButton")
+				b:SetScript("OnDragStart", function()
+					if LeaMapsLC["UnlockMapFrame"] == "On" and
+					   WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size == WORLDMAP_WINDOWED_SIZE then
+						WorldMapFrame:StartMoving()
+					end
+				end)
+				b:SetScript("OnDragStop", function()
+					WorldMapFrame:StopMovingOrSizing()
+					WorldMapFrame:SetUserPlaced(false)
+					LeaMapsLC["MapPosA"], void, LeaMapsLC["MapPosR"], LeaMapsLC["MapPosX"], LeaMapsLC["MapPosY"] = WorldMapFrame:GetPoint()
+					if WorldMapTitleButton_OnDragStop then WorldMapTitleButton_OnDragStop() end
+				end)
+				b:Hide()
+				tinsert(borders, b)
+			end
+			LeaMapsLC.dragBorders = borders
+		end
+
+		-- Show/hide drag borders based on unlock state and windowed mode
+		local function UpdateDragBorders()
+			local show = LeaMapsLC["UnlockMapFrame"] == "On" and
+			             WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size == WORLDMAP_WINDOWED_SIZE
+			for _, b in ipairs(LeaMapsLC.dragBorders) do
+				if show then b:Show() else b:Hide() end
+			end
+		end
+		LeaMapsCB["UnlockMapFrame"]:HookScript("OnClick", UpdateDragBorders)
+		WorldMapFrame:HookScript("OnShow", UpdateDragBorders)
+
 		-- Force windowed map mode on every show; Blizzard respects this CVar
 		-- to open the map in mini/windowed size instead of fullscreen
 		if not GetCVarBool("miniWorldMap") then
