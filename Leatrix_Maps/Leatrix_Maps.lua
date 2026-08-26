@@ -1135,6 +1135,38 @@
 		LeaMapsCB["UnlockMapFrame"]:HookScript("OnClick", UpdateDragBorders)
 		WorldMapFrame:HookScript("OnShow", UpdateDragBorders)
 
+		-- Shift+Left-click drag to move the map from anywhere on its body.
+		-- Some addons (e.g. ElvUI's world map skin) can leave left/right click
+		-- on the map body free to rotate the camera, making the edge-only drag
+		-- borders unreachable; Shift+drag works regardless of where on the map
+		-- the click starts.
+		do
+			local shiftMoving = false
+			local origOnMouseDown = WorldMapButton:GetScript("OnMouseDown")
+			local origOnMouseUp   = WorldMapButton:GetScript("OnMouseUp")
+			WorldMapButton:SetScript("OnMouseDown", function()
+				if arg1 == "LeftButton" and IsShiftKeyDown() and
+				   LeaMapsLC["UnlockMapFrame"] == "On" and
+				   WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size == WORLDMAP_WINDOWED_SIZE then
+					shiftMoving = true
+					WorldMapFrame:StartMoving()
+					return
+				end
+				if origOnMouseDown then origOnMouseDown() end
+			end)
+			WorldMapButton:SetScript("OnMouseUp", function()
+				if shiftMoving then
+					shiftMoving = false
+					WorldMapFrame:StopMovingOrSizing()
+					WorldMapFrame:SetUserPlaced(false)
+					LeaMapsLC["MapPosA"], void, LeaMapsLC["MapPosR"], LeaMapsLC["MapPosX"], LeaMapsLC["MapPosY"] = WorldMapFrame:GetPoint()
+					if WorldMapTitleButton_OnDragStop then WorldMapTitleButton_OnDragStop() end
+					return
+				end
+				if origOnMouseUp then origOnMouseUp() end
+			end)
+		end
+
 		-- Force windowed map mode on every show; Blizzard respects this CVar
 		-- to open the map in mini/windowed size instead of fullscreen
 		if not GetCVarBool("miniWorldMap") then
