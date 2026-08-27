@@ -1059,21 +1059,27 @@
 		WorldMapFrame:SetClampedToScreen(false)
 		WorldMapFrame:RegisterForDrag("LeftButton")
 		WorldMapFrame:SetScript("OnDragStart", function()
-			if LeaMapsLC["UnlockMapFrame"] == "On" and
+			if not InCombatLockdown() and
+			   LeaMapsLC["UnlockMapFrame"] == "On" and
 			   WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size == WORLDMAP_WINDOWED_SIZE then
 				WorldMapFrame:StartMoving()
 			end
 		end)
 		WorldMapFrame:SetScript("OnDragStop", function()
+			if InCombatLockdown() then return end
 			WorldMapFrame:StopMovingOrSizing()
 			WorldMapFrame:SetUserPlaced(false)
 			LeaMapsLC["MapPosA"], void, LeaMapsLC["MapPosR"], LeaMapsLC["MapPosX"], LeaMapsLC["MapPosY"] = WorldMapFrame:GetPoint()
 			if WorldMapTitleButton_OnDragStop then WorldMapTitleButton_OnDragStop() end
 		end)
 
-		-- Wide invisible drag borders so the map is easy to grab
+		-- Wide invisible drag borders so the map is easy to grab.  These are
+		-- separate child frames of WorldMapFrame and never touch WorldMapButton's
+		-- own click handlers, so they can't interfere with anything (like
+		-- Ascension's Shift+Click zone return points) that hooks into the map's
+		-- normal click chain.
 		do
-			local BORDER_W = 12
+			local BORDER_W = 18
 			local borders = {}
 			local anchors = {
 				{"TOPLEFT", "TOPLEFT", "BOTTOMLEFT", 0},      -- left
@@ -1107,12 +1113,14 @@
 				b:SetMovable(true)
 				b:RegisterForDrag("LeftButton")
 				b:SetScript("OnDragStart", function()
-					if LeaMapsLC["UnlockMapFrame"] == "On" and
+					if not InCombatLockdown() and
+					   LeaMapsLC["UnlockMapFrame"] == "On" and
 					   WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size == WORLDMAP_WINDOWED_SIZE then
 						WorldMapFrame:StartMoving()
 					end
 				end)
 				b:SetScript("OnDragStop", function()
+					if InCombatLockdown() then return end
 					WorldMapFrame:StopMovingOrSizing()
 					WorldMapFrame:SetUserPlaced(false)
 					LeaMapsLC["MapPosA"], void, LeaMapsLC["MapPosR"], LeaMapsLC["MapPosX"], LeaMapsLC["MapPosY"] = WorldMapFrame:GetPoint()
@@ -1135,39 +1143,108 @@
 		LeaMapsCB["UnlockMapFrame"]:HookScript("OnClick", UpdateDragBorders)
 		WorldMapFrame:HookScript("OnShow", UpdateDragBorders)
 
-		-- Ctrl+Left-click drag to move the map from anywhere on its body.
-		-- Some addons (e.g. ElvUI's world map skin) can leave left/right click
-		-- on the map body free to rotate the camera, making the edge-only drag
-		-- borders unreachable; Ctrl+drag works regardless of where on the map
-		-- the click starts.
+		----------------------------------------------------------------------
+		-- Ascension zone return points ("Stone of Retreat" hearthstones)
+		----------------------------------------------------------------------
+		-- Ascension lets Shift+Click on the map cast a zone-return spell
+		-- directly, via a secure CastSpellByID call reached through
+		-- WorldMapButton_OnClick. Leatrix Maps has to replace WorldMapButton's
+		-- OnMouseDown/OnMouseUp to support free zoom/pan, and once an addon
+		-- owns that click chain, any secure call reached through it gets
+		-- tainted -- there's no way around that from here (confirmed: the
+		-- same Shift+Click works fine with Leatrix Maps disabled).
 		--
-		-- Uses Ctrl rather than Shift: Ascension binds Shift+Click on the map
-		-- to its hearthstone-style zone return points (a secure CastSpellByID
-		-- call). Swallowing that click here to start a move instead prevented
-		-- the original click from reaching Ascension's handler, tainting the
-		-- secure call ("AddOn 'Leatrix_Maps' tainted the call of the secure
-		-- function 'CastSpellByID()'"). Ctrl+Click is not used by that feature.
+		-- Rather than let the click silently taint and pop the "stop error"
+		-- dialog, block it outright and offer a real, secure alternative: a
+		-- small button panel next to the map listing the player's "Stone of
+		-- Retreat" spells, driven by genuine SecureActionButtonTemplate
+		-- clicks (the same mechanism action bars use), which never touches
+		-- our code at all.
+
+		local hearthPanel = CreateFrame("Frame", "LeaMapsHearthPanel", WorldMapFrame)
+		hearthPanel:SetWidth(36)
+		hearthPanel:SetPoint("TOPLEFT", WorldMapFrame, "TOPRIGHT", 4, -20)
+		hearthPanel.buttons = {}
+
+		local function GetHearthButton(i)
+			local btn = hearthPanel.buttons[i]
+			if not btn then
+				btn = CreateFrame("Button", "LeaMapsHearthBtn" .. i, hearthPanel, "SecureActionButtonTemplate")
+				btn:SetSize(32, 32)
+				btn:SetPoint("TOP", hearthPanel, "TOP", 0, -(i - 1) * 36)
+				btn:RegisterForClicks("AnyUp")
+				btn.icon = btn:CreateTexture(nil, "ARTWORK")
+				btn.icon:SetAllPoints()
+				btn.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+				local nt = btn:CreateTexture(nil, "OVERLAY")
+				nt:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+				nt:SetBlendMode("ADD")
+				nt:SetAllPoints()
+				btn:SetScript("OnEnter", function(self)
+					GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+					GameTooltip:SetSpell(self.spellIndex, BOOKTYPE_SPELL)
+					GameTooltip:Show()
+				end)
+				btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+				hearthPanel.buttons[i] = btn
+			end
+			return btn
+		end
+
+		local function UpdateHearthPanel()
+			if InCombatLockdown() then return end
+			local shown = 0
+			for tab = 1, GetNumSpellTabs() do
+				local _, _, tabOffset, numSlots = GetSpellTabInfo(tab)
+				for i = tabOffset + 1, tabOffset + numSlots do
+					local name = GetSpellName(i, BOOKTYPE_SPELL)
+					if name and name:find("Stone of Retreat", 1, true) then
+						shown = shown + 1
+						local btn = GetHearthButton(shown)
+						btn.spellIndex = i
+						btn.icon:SetTexture(GetSpellTexture(i, BOOKTYPE_SPELL))
+						btn:SetAttribute("type", "spell")
+						btn:SetAttribute("spell", name)
+						btn:Show()
+					end
+				end
+			end
+			for i = shown + 1, #hearthPanel.buttons do
+				hearthPanel.buttons[i]:Hide()
+			end
+			if shown > 0 then
+				hearthPanel:SetHeight(shown * 36)
+				hearthPanel:Show()
+			else
+				hearthPanel:Hide()
+			end
+		end
+
+		hearthPanel:RegisterEvent("SPELLS_CHANGED")
+		hearthPanel:RegisterEvent("PLAYER_REGEN_ENABLED")
+		hearthPanel:SetScript("OnEvent", UpdateHearthPanel)
+		WorldMapFrame:HookScript("OnShow", UpdateHearthPanel)
+
+		-- Block Shift+Click on the map body: never let it reach the tainted
+		-- call chain, and tell the player where the working alternative is.
 		do
-			local ctrlMoving = false
+			local blocked = false
 			local origOnMouseDown = WorldMapButton:GetScript("OnMouseDown")
 			local origOnMouseUp   = WorldMapButton:GetScript("OnMouseUp")
 			WorldMapButton:SetScript("OnMouseDown", function()
-				if arg1 == "LeftButton" and IsControlKeyDown() and
-				   LeaMapsLC["UnlockMapFrame"] == "On" and
-				   WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size == WORLDMAP_WINDOWED_SIZE then
-					ctrlMoving = true
-					WorldMapFrame:StartMoving()
+				if arg1 == "LeftButton" and IsShiftKeyDown() and hearthPanel:IsShown() then
+					blocked = true
+					UIErrorsFrame:AddMessage(
+						"Leatrix Maps: use the Stone of Retreat panel next to the map to travel",
+						1.0, 0.1, 0.1, 1.0, 5)
 					return
 				end
+				blocked = false
 				if origOnMouseDown then origOnMouseDown() end
 			end)
 			WorldMapButton:SetScript("OnMouseUp", function()
-				if ctrlMoving then
-					ctrlMoving = false
-					WorldMapFrame:StopMovingOrSizing()
-					WorldMapFrame:SetUserPlaced(false)
-					LeaMapsLC["MapPosA"], void, LeaMapsLC["MapPosR"], LeaMapsLC["MapPosX"], LeaMapsLC["MapPosY"] = WorldMapFrame:GetPoint()
-					if WorldMapTitleButton_OnDragStop then WorldMapTitleButton_OnDragStop() end
+				if blocked then
+					blocked = false
 					return
 				end
 				if origOnMouseUp then origOnMouseUp() end
@@ -2576,7 +2653,11 @@
 	stopFrame.ft:SetVertexColor(0.5, 0.5, 0.5, 1.0)
 
 	LeaMapsLC:MakeTx(stopFrame, "Leatrix Maps", 16, -12)
-	LeaMapsLC:MakeWD(stopFrame, "A stop error has occurred but no need to worry.  It can happen from time to time.  Click the reload button to resolve it.", 16, -32, 338)
+	local stopFrameGenericMsg = "A stop error has occurred but no need to worry.  It can happen from time to time.  Click the reload button to resolve it."
+	local stopFrameHearthMsg  = "Shift+Clicking a zone-return point on the map doesn't work while Leatrix Maps is enabled.  Use the return-point panel next to the map instead.  No reload needed."
+	stopFrame.msgText = LeaMapsLC:MakeWD(stopFrame, stopFrameGenericMsg, 16, -32, 338)
+	stopFrame.genericMsg = stopFrameGenericMsg
+	stopFrame.hearthMsg  = stopFrameHearthMsg
 
 	local stopRelBtn = LeaMapsLC:CreateButton("StopReloadButton", stopFrame, "Reload", "BOTTOMRIGHT", -16, 10, 25, "")
 	stopRelBtn:SetScript("OnClick", ReloadUI)
@@ -2585,6 +2666,7 @@
 	stopRelBtn.f:SetPoint("RIGHT", stopRelBtn, "LEFT", -10, 0)
 	stopRelBtn.f:SetText(L["Your UI needs to be reloaded."])
 	stopRelBtn:Hide(); stopRelBtn:Show()
+	stopFrame.reloadBtn = stopRelBtn
 
 	local stopFrameClose = CreateFrame("Button", nil, stopFrame, "UIPanelCloseButton")
 	stopFrameClose:SetSize(30, 30)
@@ -2682,7 +2764,7 @@
 	eFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 	eFrame:RegisterEvent("PLAYER_LOGOUT")
 	eFrame:RegisterEvent("ADDON_ACTION_FORBIDDEN")
-	eFrame:SetScript("OnEvent", function(self, event, arg1)
+	eFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
 
 		if event == "ADDON_LOADED" and arg1 == "Leatrix_Maps" then
 
@@ -2783,6 +2865,23 @@
 
 		elseif event == "ADDON_ACTION_FORBIDDEN" and arg1 == "Leatrix_Maps" then
 			StaticPopup_Hide("ADDON_ACTION_FORBIDDEN")
+			-- Ascension's zone-return spell (cast by Shift+Clicking the map)
+			-- goes through a click chain Leatrix Maps has to own for its
+			-- zoom/pan feature, which taints that secure spell cast. Show a
+			-- specific, calmer message for that known case (no reload
+			-- actually needed) and keep the generic one for anything else.
+			if arg2 and tostring(arg2):find("CastSpellByID", 1, true) then
+				stopFrame.msgText:SetText(stopFrame.hearthMsg)
+				stopFrame.reloadBtn:SetText("Close")
+				stopFrame.reloadBtn:SetScript("OnClick", function() stopFrame:Hide() end)
+				stopFrame.reloadBtn.f:Hide()
+			else
+				stopFrame.msgText:SetText(stopFrame.genericMsg)
+				stopFrame.reloadBtn:SetText(L["Reload"] or "Reload")
+				stopFrame.reloadBtn:SetScript("OnClick", ReloadUI)
+				stopFrame.reloadBtn.f:Show()
+			end
+			stopFrame.reloadBtn:Show()
 			stopFrame:Show()
 		end
 	end)
