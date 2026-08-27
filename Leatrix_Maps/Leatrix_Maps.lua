@@ -1135,28 +1135,35 @@
 		LeaMapsCB["UnlockMapFrame"]:HookScript("OnClick", UpdateDragBorders)
 		WorldMapFrame:HookScript("OnShow", UpdateDragBorders)
 
-		-- Shift+Left-click drag to move the map from anywhere on its body.
+		-- Ctrl+Left-click drag to move the map from anywhere on its body.
 		-- Some addons (e.g. ElvUI's world map skin) can leave left/right click
 		-- on the map body free to rotate the camera, making the edge-only drag
-		-- borders unreachable; Shift+drag works regardless of where on the map
+		-- borders unreachable; Ctrl+drag works regardless of where on the map
 		-- the click starts.
+		--
+		-- Uses Ctrl rather than Shift: Ascension binds Shift+Click on the map
+		-- to its hearthstone-style zone return points (a secure CastSpellByID
+		-- call). Swallowing that click here to start a move instead prevented
+		-- the original click from reaching Ascension's handler, tainting the
+		-- secure call ("AddOn 'Leatrix_Maps' tainted the call of the secure
+		-- function 'CastSpellByID()'"). Ctrl+Click is not used by that feature.
 		do
-			local shiftMoving = false
+			local ctrlMoving = false
 			local origOnMouseDown = WorldMapButton:GetScript("OnMouseDown")
 			local origOnMouseUp   = WorldMapButton:GetScript("OnMouseUp")
 			WorldMapButton:SetScript("OnMouseDown", function()
-				if arg1 == "LeftButton" and IsShiftKeyDown() and
+				if arg1 == "LeftButton" and IsControlKeyDown() and
 				   LeaMapsLC["UnlockMapFrame"] == "On" and
 				   WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size == WORLDMAP_WINDOWED_SIZE then
-					shiftMoving = true
+					ctrlMoving = true
 					WorldMapFrame:StartMoving()
 					return
 				end
 				if origOnMouseDown then origOnMouseDown() end
 			end)
 			WorldMapButton:SetScript("OnMouseUp", function()
-				if shiftMoving then
-					shiftMoving = false
+				if ctrlMoving then
+					ctrlMoving = false
 					WorldMapFrame:StopMovingOrSizing()
 					WorldMapFrame:SetUserPlaced(false)
 					LeaMapsLC["MapPosA"], void, LeaMapsLC["MapPosR"], LeaMapsLC["MapPosX"], LeaMapsLC["MapPosY"] = WorldMapFrame:GetPoint()
