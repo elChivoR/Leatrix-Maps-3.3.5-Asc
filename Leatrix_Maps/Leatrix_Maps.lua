@@ -1161,25 +1161,167 @@
 		-- clicks (the same mechanism action bars use), which never touches
 		-- our code at all.
 
-		local hearthPanel = CreateFrame("Frame", "LeaMapsHearthPanel", WorldMapFrame)
-		hearthPanel:SetWidth(36)
-		hearthPanel:SetPoint("TOPLEFT", WorldMapFrame, "TOPRIGHT", 4, -20)
+		-- Best-effort "which zones/continent this destination is relevant
+		-- to" table, used to only show Stone of Retreat buttons relevant to
+		-- whatever the map is currently showing -- a specific zone (e.g.
+		-- only "Stormwind" while looking at Elwynn Forest, not Orgrimmar
+		-- too) or a whole continent overview (only Eastern Kingdoms
+		-- destinations while looking at the Eastern Kingdoms continent map,
+		-- not Kalimdor ones). Continent numbers match GetCurrentMapContinent
+		-- (1 = Eastern Kingdoms, 2 = Kalimdor, 3 = Outland, 4 = Northrend).
+		-- Keyed by the destination name exactly as it appears after "Stone
+		-- of Retreat: " in the spell name. A destination NOT listed here is
+		-- always shown (fail open -- better to show an extra button than
+		-- hide a valid one we don't know about). Incomplete on purpose: add
+		-- entries here as more Ascension destinations turn up.
+		-- NOTE: GetCurrentMapContinent() indexes Kalimdor=1, Eastern
+		-- Kingdoms=2 -- the reverse of what the zone/continent dropdown
+		-- elsewhere in this file assumes. Confirmed live via
+		-- /run print(GetCurrentMapContinent(), GetCurrentMapZone()) while
+		-- looking at the Eastern Kingdoms continent map (returned 2, 0).
+		local hearthZones = {
+			["Stormwind"]       = {continent = 2, zones = {"Elwynn Forest", "Redridge Mountains", "Westfall", "Duskwood", "Deadwind Pass", "Northern Stranglethorn", "Cape of Stranglethorn Vale"}},
+			["Ironforge"]       = {continent = 2, zones = {"Dun Morogh", "Loch Modan", "Wetlands"}},
+			["Undercity"]       = {continent = 2, zones = {"Tirisfal Glades", "Silverpine Forest"}},
+			["Silvermoon City"] = {continent = 2, zones = {"Eversong Woods", "Ghostlands"}},
+			["Booty Bay"]       = {continent = 2, zones = {"Northern Stranglethorn", "Cape of Stranglethorn Vale"}},
+			["Darnassus"]       = {continent = 1, zones = {"Teldrassil", "Darkshore", "Ashenvale"}},
+			["Exodar"]          = {continent = 1, zones = {"Azuremyst Isle", "Bloodmyst Isle"}},
+			["Orgrimmar"]       = {continent = 1, zones = {"Durotar", "Northern Barrens", "The Barrens"}},
+			["Thunder Bluff"]   = {continent = 1, zones = {"Mulgore"}},
+			["Everlook"]        = {continent = 1, zones = {"Winterspring"}},
+			["Gadgetzan"]       = {continent = 1, zones = {"Tanaris"}},
+			["Shattrath City"]  = {continent = 3, zones = {"Terokkar Forest", "Nagrand", "Blade's Edge Mountains", "Zangarmarsh", "Netherstorm", "Shadowmoon Valley", "Hellfire Peninsula"}},
+			["Dalaran"]         = {continent = 4, zones = {"Crystalsong Forest", "Icecrown", "Storm Peaks", "Howling Fjord", "Dragonblight", "Grizzly Hills", "Zul'Drak", "Wintergrasp", "Sholazar Basin"}},
+		}
+
+		local function GetViewedZoneName()
+			local cont, zone = GetCurrentMapContinent(), GetCurrentMapZone()
+			if not cont or cont < 1 or not zone or zone == 0 then return nil end
+			local zones = {GetMapZones(cont)}
+			return zones[zone]
+		end
+
+		local function IsHearthRelevant(destination, viewedZone, viewedContinent)
+			local info = hearthZones[destination]
+			if not info then return true end -- unmapped destination: show it rather than guess wrong
+			if destination == viewedZone then return true end
+			if viewedZone then
+				for _, z in ipairs(info.zones) do
+					if z == viewedZone then return true end
+				end
+				return false
+			end
+			-- Continent overview (no specific zone selected): filter by continent
+			if viewedContinent and viewedContinent > 0 then
+				return info.continent == viewedContinent
+			end
+			return true -- world map / unknown continent: show everything
+		end
+
+		-- Sits flush against the map's right edge, sharing the same flat
+		-- dark background Leatrix Maps uses for the map body, so it reads
+		-- as part of the map rather than a separate floating window. Each
+		-- row shows the destination name next to its icon (not just a bare
+		-- icon), there's a search box to filter the list, and a small
+		-- toggle to collapse it down to just the title bar (remembered
+		-- across sessions; open by default).
+		if LeaMapsDB["HearthPanelCollapsed"] == nil then LeaMapsDB["HearthPanelCollapsed"] = false end
+
+		-- Content is inset LEFT_PAD from the frame's own left edge, keeping
+		-- it clear of the right-edge drag border (see above) so that border
+		-- can't steal its clicks; the frame itself starts flush at the map's
+		-- edge so the (real Blizzard) inset panel border reads as attached
+		-- to the map rather than a separate floating window.
+		local LEFT_PAD    = 10
+		local PANEL_W     = LEFT_PAD + 150
+		local HEADER_H    = 58
+		local COLLAPSED_H = 22
+		local ROW_H       = 20
+		local ICON_SIZE   = 16
+
+		-- Real Blizzard chrome: the same recessed inset-panel border used
+		-- throughout the default UI (character panel, quest log side
+		-- sections, etc.) and the same input box the default UI uses for
+		-- search fields, rather than hand-drawn textures.
+		local hearthPanel = CreateFrame("Frame", "LeaMapsHearthPanel", WorldMapFrame, "InsetFrameTemplate")
+		hearthPanel:SetWidth(PANEL_W)
+		hearthPanel:SetPoint("TOPLEFT", WorldMapScrollFrame, "TOPRIGHT", 3, 3)
 		hearthPanel.buttons = {}
+
+		local hearthIcon = hearthPanel:CreateTexture(nil, "ARTWORK")
+		hearthIcon:SetSize(14, 14)
+		hearthIcon:SetPoint("TOPLEFT", LEFT_PAD + 4, -6)
+		hearthIcon:SetTexture("Interface\\Icons\\INV_Misc_Rune_01")
+		hearthIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+		local hearthTitle = hearthPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+		hearthTitle:SetPoint("LEFT", hearthIcon, "RIGHT", 4, 0)
+		hearthTitle:SetText(NORMAL_FONT_COLOR_CODE .. "Zone Return|r")
+
+		local hearthToggle = CreateFrame("Button", nil, hearthPanel)
+		hearthToggle:SetSize(14, 14)
+		hearthToggle:SetPoint("TOPRIGHT", -5, -5)
+		hearthToggle.tx = hearthToggle:CreateTexture(nil, "ARTWORK")
+		hearthToggle.tx:SetAllPoints()
+		hearthToggle:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+			GameTooltip:SetText(LeaMapsDB["HearthPanelCollapsed"] and "Show return points" or "Hide return points")
+			GameTooltip:Show()
+		end)
+		hearthToggle:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+		local hearthDivider = hearthPanel:CreateTexture(nil, "ARTWORK")
+		hearthDivider:SetHeight(8)
+		hearthDivider:SetPoint("TOPLEFT", hearthIcon, "BOTTOMLEFT", -1, -3)
+		hearthDivider:SetPoint("TOPRIGHT", hearthPanel, "TOPRIGHT", -6, 0)
+		hearthDivider:SetTexture("Interface\\Common\\UI-TooltipDivider-Transparent")
+
+		local hearthSearch = CreateFrame("EditBox", "LeaMapsHearthSearch", hearthPanel, "InputBoxTemplate")
+		hearthSearch:SetHeight(16)
+		hearthSearch:SetPoint("TOPLEFT", hearthDivider, "BOTTOMLEFT", 6, -6)
+		hearthSearch:SetPoint("TOPRIGHT", hearthPanel, "TOPRIGHT", -8, 0)
+		hearthSearch:SetAutoFocus(false)
+		hearthSearch:SetFontObject(GameFontHighlightSmall)
+		hearthSearch:SetMaxLetters(30)
+		hearthSearch:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+		hearthSearch:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+
+		local hearthSearchHint = hearthSearch:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+		hearthSearchHint:SetPoint("LEFT", 4, 0)
+		hearthSearchHint:SetText("Search...")
 
 		local function GetHearthButton(i)
 			local btn = hearthPanel.buttons[i]
 			if not btn then
 				btn = CreateFrame("Button", "LeaMapsHearthBtn" .. i, hearthPanel, "SecureActionButtonTemplate")
-				btn:SetSize(32, 32)
-				btn:SetPoint("TOP", hearthPanel, "TOP", 0, -(i - 1) * 36)
+				btn:SetHeight(ROW_H)
+				btn:SetPoint("TOPLEFT", hearthPanel, "TOPLEFT", LEFT_PAD + 4, -(HEADER_H + (i - 1) * ROW_H))
+				btn:SetPoint("TOPRIGHT", hearthPanel, "TOPRIGHT", -6, -(HEADER_H + (i - 1) * ROW_H))
 				btn:RegisterForClicks("AnyUp")
+
+				btn.hl = btn:CreateTexture(nil, "HIGHLIGHT")
+				btn.hl:SetAllPoints()
+				btn.hl:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+				btn.hl:SetBlendMode("ADD")
+
 				btn.icon = btn:CreateTexture(nil, "ARTWORK")
-				btn.icon:SetAllPoints()
+				btn.icon:SetSize(ICON_SIZE, ICON_SIZE)
+				btn.icon:SetPoint("LEFT", 1, 0)
 				btn.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-				local nt = btn:CreateTexture(nil, "OVERLAY")
-				nt:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-				nt:SetBlendMode("ADD")
-				nt:SetAllPoints()
+
+				-- Small "socketed" frame around the icon, like an item slot
+				local iconBorder = btn:CreateTexture(nil, "OVERLAY")
+				iconBorder:SetPoint("TOPLEFT", btn.icon, "TOPLEFT", -1, 1)
+				iconBorder:SetPoint("BOTTOMRIGHT", btn.icon, "BOTTOMRIGHT", 1, -1)
+				iconBorder:SetTexture("Interface\\Common\\WhiteIconFrame")
+
+				btn.label = btn:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+				btn.label:SetPoint("LEFT", btn.icon, "RIGHT", 4, 0)
+				btn.label:SetPoint("RIGHT", 0, 0)
+				btn.label:SetJustifyH("LEFT")
+				btn.label:SetWordWrap(false)
+
 				btn:SetScript("OnEnter", function(self)
 					GameTooltip:SetOwner(self, "ANCHOR_LEFT")
 					GameTooltip:SetSpell(self.spellIndex, BOOKTYPE_SPELL)
@@ -1193,19 +1335,43 @@
 
 		local function UpdateHearthPanel()
 			if InCombatLockdown() then return end
+
+			local collapsed = LeaMapsDB["HearthPanelCollapsed"]
+			hearthToggle.tx:SetTexture(collapsed
+				and "Interface\\Buttons\\UI-PlusButton-Up"
+				or  "Interface\\Buttons\\UI-MinusButton-Up")
+			hearthDivider:SetShown(not collapsed)
+			hearthSearch:SetShown(not collapsed)
+			hearthSearchHint:SetShown(not collapsed and hearthSearch:GetText() == "")
+
+			if collapsed then
+				for _, b in ipairs(hearthPanel.buttons) do b:Hide() end
+				hearthPanel:SetHeight(COLLAPSED_H)
+				hearthPanel:Show()
+				return
+			end
+
+			local filter = hearthSearch:GetText():lower()
+			local viewedZone = GetViewedZoneName()
+			local viewedContinent = GetCurrentMapContinent()
 			local shown = 0
 			for tab = 1, GetNumSpellTabs() do
 				local _, _, tabOffset, numSlots = GetSpellTabInfo(tab)
 				for i = tabOffset + 1, tabOffset + numSlots do
 					local name = GetSpellName(i, BOOKTYPE_SPELL)
 					if name and name:find("Stone of Retreat", 1, true) then
-						shown = shown + 1
-						local btn = GetHearthButton(shown)
-						btn.spellIndex = i
-						btn.icon:SetTexture(GetSpellTexture(i, BOOKTYPE_SPELL))
-						btn:SetAttribute("type", "spell")
-						btn:SetAttribute("spell", name)
-						btn:Show()
+						local destination = name:match("Stone of Retreat:%s*(.+)")
+						if IsHearthRelevant(destination, viewedZone, viewedContinent) and
+						   (filter == "" or (destination and destination:lower():find(filter, 1, true))) then
+							shown = shown + 1
+							local btn = GetHearthButton(shown)
+							btn.spellIndex = i
+							btn.icon:SetTexture(GetSpellTexture(i, BOOKTYPE_SPELL))
+							btn.label:SetText(destination or name)
+							btn:SetAttribute("type", "spell")
+							btn:SetAttribute("spell", name)
+							btn:Show()
+						end
 					end
 				end
 			end
@@ -1213,15 +1379,25 @@
 				hearthPanel.buttons[i]:Hide()
 			end
 			if shown > 0 then
-				hearthPanel:SetHeight(shown * 36)
+				hearthPanel:SetHeight(HEADER_H + shown * ROW_H + 4)
 				hearthPanel:Show()
 			else
 				hearthPanel:Hide()
 			end
 		end
 
+		hearthToggle:SetScript("OnClick", function()
+			LeaMapsDB["HearthPanelCollapsed"] = not LeaMapsDB["HearthPanelCollapsed"]
+			UpdateHearthPanel()
+		end)
+		hearthSearch:SetScript("OnTextChanged", function(self)
+			hearthSearchHint:SetShown(self:GetText() == "")
+			UpdateHearthPanel()
+		end)
+
 		hearthPanel:RegisterEvent("SPELLS_CHANGED")
 		hearthPanel:RegisterEvent("PLAYER_REGEN_ENABLED")
+		hearthPanel:RegisterEvent("WORLD_MAP_UPDATE")
 		hearthPanel:SetScript("OnEvent", UpdateHearthPanel)
 		WorldMapFrame:HookScript("OnShow", UpdateHearthPanel)
 
