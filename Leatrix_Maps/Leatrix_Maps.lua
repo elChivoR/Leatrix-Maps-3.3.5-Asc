@@ -1221,12 +1221,11 @@
 
 		-- Sits flush against the map's right edge, sharing the same flat
 		-- dark background Leatrix Maps uses for the map body, so it reads
-		-- as part of the map rather than a separate floating window. Each
-		-- row shows the destination name next to its icon (not just a bare
-		-- icon), there's a search box to filter the list, and a small
-		-- toggle to collapse it down to just the title bar (remembered
-		-- across sessions; open by default).
-		if LeaMapsDB["HearthPanelCollapsed"] == nil then LeaMapsDB["HearthPanelCollapsed"] = false end
+		-- as part of the map rather than a separate floating window. A
+		-- small icon-only tab (like the Spellbook's side tabs) sits at
+		-- the map's edge; clicking it unfolds the list + search box to
+		-- its right (remembered across sessions; closed by default).
+		if LeaMapsDB["HearthPanelCollapsed"] == nil then LeaMapsDB["HearthPanelCollapsed"] = true end
 
 		-- Content is inset LEFT_PAD from the frame's own left edge, keeping
 		-- it clear of the right-edge drag border (see above) so that border
@@ -1235,51 +1234,97 @@
 		-- to the map rather than a separate floating window.
 		local LEFT_PAD    = 10
 		local PANEL_W     = LEFT_PAD + 150
-		local HEADER_H    = 58
-		local COLLAPSED_H = 22
+		local HEADER_H    = 30
 		local ROW_H       = 20
 		local ICON_SIZE   = 16
+		local TAB_SIZE    = 28
+
+		-- Forward-declared: the tab's OnClick (defined below, right after
+		-- creating the tab) needs to call this, but it's only fully
+		-- defined further down, after GetHearthButton.
+		local UpdateHearthPanel
+
+		-- The tab is anchored directly to WorldMapScrollFrame (always
+		-- resolvable while the map is open), and hearthPanel (below) is
+		-- anchored to the TAB rather than the other way around -- a frame
+		-- anchored to a HIDDEN frame gets an unresolvable position
+		-- (GetTop/GetLeft return nil) even while it's technically Shown()
+		-- itself, which is what made an earlier version of this invisible
+		-- while the panel was collapsed. The tab stays visible whenever
+		-- there's anything to show at all, so it's the safe anchor.
+		-- A real Button (not a plain Frame) so the clickable area is the
+		-- button's actual bounds via WoW's normal button hit-testing --
+		-- highlight and click region both natively match the box instead
+		-- of being approximated by hand.
+		local hearthTab = CreateFrame("Button", "LeaMapsHearthTab", WorldMapFrame, "InsetFrameTemplate")
+		hearthTab:SetSize(TAB_SIZE, TAB_SIZE)
+		hearthTab:SetPoint("TOPLEFT", WorldMapScrollFrame, "TOPRIGHT", 2, -8)
+		-- Other addons (e.g. LootCollector) commonly dock small utility
+		-- windows right at the map's top-right corner, on top of this
+		-- tab, which was silently eating clicks over its center while
+		-- only the exposed edges still responded. FULLSCREEN_DIALOG is
+		-- the same strata this addon already uses elsewhere (drag
+		-- borders, dropdowns, the stop-error popup) to guarantee it sits
+		-- above other addons' frames.
+		hearthTab:SetFrameStrata("FULLSCREEN_DIALOG")
+		-- Same strata isn't enough on its own -- within one strata the
+		-- higher frame LEVEL wins, and whatever unnamed frame was eating
+		-- clicks here sits at level 88. Force ours comfortably above it.
+		hearthTab:SetFrameLevel(500)
+		hearthTab:RegisterForClicks("AnyUp")
+		-- InsetFrameTemplate (or something in its inheritance chain) seems
+		-- to leave a non-zero default hit-rect, shrinking the clickable
+		-- area inward so only a thin margin near the border registers
+		-- clicks -- explicitly zero it out so the whole square (icon
+		-- included) is clickable, not just its edges.
+		hearthTab:SetHitRectInsets(0, 0, 0, 0)
+		-- The row-highlight texture used elsewhere in this panel is a wide
+		-- bar meant for list rows -- stretched onto a small square button
+		-- it only showed at the edges. This is the standard square-icon
+		-- highlight WoW itself uses for action bar / bag / spellbook icons.
+		hearthTab:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+
+		hearthTab.icon = hearthTab:CreateTexture(nil, "ARTWORK")
+		hearthTab.icon:SetSize(18, 18)
+		hearthTab.icon:SetPoint("CENTER")
+		hearthTab.icon:SetTexture("Interface\\Icons\\INV_Misc_Rune_01")
+		hearthTab.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+		-- hearthTab.canOpen (set in UpdateHearthPanel below) is true only
+		-- when at least one Stone of Retreat is relevant to the zone/
+		-- continent currently being viewed -- if none are, the tab dims
+		-- and clicking it does nothing rather than unfolding an empty box.
+		hearthTab:SetScript("OnClick", function(self)
+			if not self.canOpen then return end
+			LeaMapsDB["HearthPanelCollapsed"] = not LeaMapsDB["HearthPanelCollapsed"]
+			UpdateHearthPanel()
+		end)
+		hearthTab:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+			if not self.canOpen then
+				GameTooltip:SetText("No return points near here")
+			else
+				GameTooltip:SetText(LeaMapsDB["HearthPanelCollapsed"] and "Show return points" or "Hide return points")
+			end
+			GameTooltip:Show()
+		end)
+		hearthTab:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 		-- Real Blizzard chrome: the same recessed inset-panel border used
 		-- throughout the default UI (character panel, quest log side
 		-- sections, etc.) and the same input box the default UI uses for
-		-- search fields, rather than hand-drawn textures.
+		-- search fields, rather than hand-drawn textures. Unfolds to the
+		-- right of the tab.
 		local hearthPanel = CreateFrame("Frame", "LeaMapsHearthPanel", WorldMapFrame, "InsetFrameTemplate")
 		hearthPanel:SetWidth(PANEL_W)
-		hearthPanel:SetPoint("TOPLEFT", WorldMapScrollFrame, "TOPRIGHT", 3, 3)
+		hearthPanel:SetPoint("TOPLEFT", hearthTab, "TOPRIGHT", 3, 0)
+		hearthPanel:SetFrameStrata("FULLSCREEN_DIALOG") -- see hearthTab: same reason
+		hearthPanel:SetFrameLevel(500)
 		hearthPanel.buttons = {}
-
-		local hearthIcon = hearthPanel:CreateTexture(nil, "ARTWORK")
-		hearthIcon:SetSize(14, 14)
-		hearthIcon:SetPoint("TOPLEFT", LEFT_PAD + 4, -6)
-		hearthIcon:SetTexture("Interface\\Icons\\INV_Misc_Rune_01")
-		hearthIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-
-		local hearthTitle = hearthPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-		hearthTitle:SetPoint("LEFT", hearthIcon, "RIGHT", 4, 0)
-		hearthTitle:SetText(NORMAL_FONT_COLOR_CODE .. "Zone Return|r")
-
-		local hearthToggle = CreateFrame("Button", nil, hearthPanel)
-		hearthToggle:SetSize(14, 14)
-		hearthToggle:SetPoint("TOPRIGHT", -5, -5)
-		hearthToggle.tx = hearthToggle:CreateTexture(nil, "ARTWORK")
-		hearthToggle.tx:SetAllPoints()
-		hearthToggle:SetScript("OnEnter", function(self)
-			GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-			GameTooltip:SetText(LeaMapsDB["HearthPanelCollapsed"] and "Show return points" or "Hide return points")
-			GameTooltip:Show()
-		end)
-		hearthToggle:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
-		local hearthDivider = hearthPanel:CreateTexture(nil, "ARTWORK")
-		hearthDivider:SetHeight(8)
-		hearthDivider:SetPoint("TOPLEFT", hearthIcon, "BOTTOMLEFT", -1, -3)
-		hearthDivider:SetPoint("TOPRIGHT", hearthPanel, "TOPRIGHT", -6, 0)
-		hearthDivider:SetTexture("Interface\\Common\\UI-TooltipDivider-Transparent")
 
 		local hearthSearch = CreateFrame("EditBox", "LeaMapsHearthSearch", hearthPanel, "InputBoxTemplate")
 		hearthSearch:SetHeight(16)
-		hearthSearch:SetPoint("TOPLEFT", hearthDivider, "BOTTOMLEFT", 6, -6)
+		hearthSearch:SetPoint("TOPLEFT", hearthPanel, "TOPLEFT", LEFT_PAD + 5, -8)
 		hearthSearch:SetPoint("TOPRIGHT", hearthPanel, "TOPRIGHT", -8, 0)
 		hearthSearch:SetAutoFocus(false)
 		hearthSearch:SetFontObject(GameFontHighlightSmall)
@@ -1333,44 +1378,40 @@
 			return btn
 		end
 
-		local function UpdateHearthPanel()
+		-- Assigns to the forward-declared local above (no "local" keyword
+		-- here -- see the comment where it was forward-declared).
+		function UpdateHearthPanel()
 			if InCombatLockdown() then return end
 
 			local collapsed = LeaMapsDB["HearthPanelCollapsed"]
-			hearthToggle.tx:SetTexture(collapsed
-				and "Interface\\Buttons\\UI-PlusButton-Up"
-				or  "Interface\\Buttons\\UI-MinusButton-Up")
-			hearthDivider:SetShown(not collapsed)
-			hearthSearch:SetShown(not collapsed)
-			hearthSearchHint:SetShown(not collapsed and hearthSearch:GetText() == "")
-
-			if collapsed then
-				for _, b in ipairs(hearthPanel.buttons) do b:Hide() end
-				hearthPanel:SetHeight(COLLAPSED_H)
-				hearthPanel:Show()
-				return
-			end
-
 			local filter = hearthSearch:GetText():lower()
 			local viewedZone = GetViewedZoneName()
 			local viewedContinent = GetCurrentMapContinent()
-			local shown = 0
+			-- total: every Stone of Retreat the character knows, anywhere.
+			-- zoneRelevant: of those, how many are relevant to the zone/
+			-- continent currently being viewed (ignores the search box).
+			-- shown: of those, how many also match the search box -- this
+			-- is what actually gets a row.
+			local shown, zoneRelevant, total = 0, 0, 0
 			for tab = 1, GetNumSpellTabs() do
 				local _, _, tabOffset, numSlots = GetSpellTabInfo(tab)
 				for i = tabOffset + 1, tabOffset + numSlots do
 					local name = GetSpellName(i, BOOKTYPE_SPELL)
 					if name and name:find("Stone of Retreat", 1, true) then
+						total = total + 1
 						local destination = name:match("Stone of Retreat:%s*(.+)")
-						if IsHearthRelevant(destination, viewedZone, viewedContinent) and
-						   (filter == "" or (destination and destination:lower():find(filter, 1, true))) then
-							shown = shown + 1
-							local btn = GetHearthButton(shown)
-							btn.spellIndex = i
-							btn.icon:SetTexture(GetSpellTexture(i, BOOKTYPE_SPELL))
-							btn.label:SetText(destination or name)
-							btn:SetAttribute("type", "spell")
-							btn:SetAttribute("spell", name)
-							btn:Show()
+						if IsHearthRelevant(destination, viewedZone, viewedContinent) then
+							zoneRelevant = zoneRelevant + 1
+							if filter == "" or (destination and destination:lower():find(filter, 1, true)) then
+								shown = shown + 1
+								local btn = GetHearthButton(shown)
+								btn.spellIndex = i
+								btn.icon:SetTexture(GetSpellTexture(i, BOOKTYPE_SPELL))
+								btn.label:SetText(destination or name)
+								btn:SetAttribute("type", "spell")
+								btn:SetAttribute("spell", name)
+								btn:Show()
+							end
 						end
 					end
 				end
@@ -1378,7 +1419,19 @@
 			for i = shown + 1, #hearthPanel.buttons do
 				hearthPanel.buttons[i]:Hide()
 			end
-			if shown > 0 then
+
+			-- The tab stays visible whenever the character has at least
+			-- one Stone of Retreat at all, but only lights up (and only
+			-- opens the panel) when at least one of them is relevant to
+			-- the zone/continent currently being viewed -- otherwise it
+			-- just dims, no empty panel gets unfolded for nothing.
+			local canOpen = zoneRelevant > 0
+			hearthTab.canOpen = canOpen
+			hearthTab:SetShown(total > 0)
+			hearthTab:SetAlpha(canOpen and 1 or 0.4)
+
+			if not collapsed and canOpen then
+				hearthSearchHint:SetShown(hearthSearch:GetText() == "")
 				hearthPanel:SetHeight(HEADER_H + shown * ROW_H + 4)
 				hearthPanel:Show()
 			else
@@ -1386,10 +1439,6 @@
 			end
 		end
 
-		hearthToggle:SetScript("OnClick", function()
-			LeaMapsDB["HearthPanelCollapsed"] = not LeaMapsDB["HearthPanelCollapsed"]
-			UpdateHearthPanel()
-		end)
 		hearthSearch:SetScript("OnTextChanged", function(self)
 			hearthSearchHint:SetShown(self:GetText() == "")
 			UpdateHearthPanel()
@@ -1457,7 +1506,11 @@
 			WorldMapFrame:SetPoint(LeaMapsLC["MapPosA"], UIParent, LeaMapsLC["MapPosR"], LeaMapsLC["MapPosX"], LeaMapsLC["MapPosY"])
 			if WorldMapTitleButton_OnDragStop then WorldMapTitleButton_OnDragStop() end
 			WorldMapFrame_UpdateQuests()
-			if WORLDMAP_SETTINGS.selectedQuestId then
+			-- selectedQuestId is 0 (not nil) when no quest is selected --
+			-- 0 is truthy in Lua, so that has to be checked for explicitly
+			-- or WorldMapFrame_SelectQuestById(0) errors trying to select
+			-- a quest that doesn't exist.
+			if WORLDMAP_SETTINGS.selectedQuestId and WORLDMAP_SETTINGS.selectedQuestId ~= 0 then
 				WorldMapFrame_SelectQuestById(WORLDMAP_SETTINGS.selectedQuestId)
 			end
 			-- LeaMapsLC:PerfEnd("OnShow: RestorePosition")
